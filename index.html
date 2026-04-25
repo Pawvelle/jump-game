@@ -1,878 +1,1188 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>跳一跳</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body {
-    width: 100%; height: 100%;
-    overflow: hidden;
-    background: #d7dde3;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
-    -webkit-tap-highlight-color: transparent;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: none;
-  }
-  canvas {
-    display: block;
-    position: absolute;
-    top: 0; left: 0;
-  }
-  #hint {
-    position: absolute;
-    bottom: 18%;
-    left: 50%;
-    transform: translateX(-50%);
-    color: #98a0a8;
-    font-size: 15px;
-    letter-spacing: 0.5px;
-    pointer-events: none;
-    transition: opacity 0.4s;
-    text-align: center;
-  }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>跳一跳</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #cfe5e4;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #hint {
+            position: absolute;
+            bottom: 14%;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(78, 94, 82, 0.72);
+            font-size: 13px;
+            letter-spacing: 0.2px;
+            pointer-events: none;
+            transition: opacity 0.45s;
+            text-align: center;
+            font-weight: 500;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
+        }
+    </style>
 </head>
 <body>
-
-<canvas id="game"></canvas>
-<div id="hint">按住屏幕或空格蓄力 · 松开跳跃</div>
-
-<script>
-// ============================================================
-//  Canvas setup
-// ============================================================
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const hint = document.getElementById('hint');
-
-let W, H, groundY;
-
-function resize() {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-  groundY = H * 0.64;
-}
-window.addEventListener('resize', resize);
-resize();
-
-// ============================================================
-//  Configuration
-// ============================================================
-const GRAVITY = 950;           // px/s²
-const CHARGE_MAX_MS = 1600;    // max charge duration
-const POWER_MIN_VX = 160;      // min horizontal launch speed
-const POWER_MAX_VX = 350;      // max horizontal launch speed
-const POWER_MIN_VY = 180;      // min upward launch speed
-const POWER_MAX_VY = 460;      // max upward launch speed
-
-// Isometric projection constants (2:1 ratio, ≈26.565°)
-const ISO_ANGLE = Math.atan(0.5);
-const ISO_COS = Math.cos(ISO_ANGLE);
-const ISO_SIN = Math.sin(ISO_ANGLE);
-
-const BLOCK_W = 120;           // world-space width
-const BLOCK_D = 60;            // world-space depth (BLOCK_W / BLOCK_D = 2:1)
-const BLOCK_THICK = 48;        // extrusion thickness (~40% of BLOCK_W)
-const BLOCK_MIN_GAP = 60;
-const BLOCK_MAX_GAP = 160;
-const BLOCK_Y_VARY = 24;
-
-const PLAYER_W = 20;
-const PLAYER_H = 32;
-const PLAYER_COLOR = '#7158a0';
-const PLAYER_DARK = '#4e3a78';
-const PLAYER_LIGHT = '#9b85c8';
-
-const BLOCK_COLORS = [
-  '#c9b8b0', '#a8b0b8', '#b8b8a8', '#b0a8a8',
-  '#a8b4a8', '#c0b0a0', '#a8a8b4', '#b8a8a0',
-];
-
-// ============================================================
-//  Game state
-// ============================================================
-let state = 'ready';   // ready | charging | jumping | gameover
-let score = 0;
-let highScore = parseInt(localStorage.getItem('jjHighScore')) || 0;
-
-let player = { x: 0, y: 0, vx: 0, vy: 0 };
-let currentBlockIdx = 0;
-let cameraX = 0;
-
-let chargeStart = 0;     // timestamp when charge began
-let chargePower = 0;     // 0..1 current charge level
-
-let particles = [];      // landing burst particles
-let scorePopups = [];    // floating +1 texts
-let shakeAmount = 0;     // screen shake on land
-
-// Block floating – each block gets a phase
-let floatPhases = [];
-
-// ============================================================
-//  Block management
-// ============================================================
-let blocks = [];
-
-function createBlock(prevBlock, forceGap) {
-  const gap = forceGap ?? (BLOCK_MIN_GAP + Math.random() * (BLOCK_MAX_GAP - BLOCK_MIN_GAP));
-  const x = prevBlock ? prevBlock.x + BLOCK_W + gap : W * 0.2;
-  // Ground plane is y=0; block top sits on ground (y≈0) with slight variation
-  const baseY = prevBlock ? prevBlock.y : 0;
-  const y = baseY + (Math.random() - 0.5) * BLOCK_Y_VARY * 0.6;
-  const color = BLOCK_COLORS[Math.floor(Math.random() * BLOCK_COLORS.length)];
-  floatPhases.push(Math.random() * Math.PI * 2);
-  return { x, y, color };
-}
-
-function ensureBlocksAhead() {
-  while (blocks.length === 0 || blocks[blocks.length - 1].x < cameraX + W * 1.5) {
-    const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
-    blocks.push(createBlock(prev));
-  }
-  // Clean up blocks far behind camera
-  while (blocks.length > 2 && blocks[0].x + BLOCK_W < cameraX - W * 0.5) {
-    blocks.shift();
-    floatPhases.shift();
-    currentBlockIdx--;
-  }
-}
-
-// ============================================================
-//  Particles & effects
-// ============================================================
-function spawnLandingParticles(x, y, color) {
-  for (let i = 0; i < 12; i++) {
-    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.8;
-    const speed = 60 + Math.random() * 160;
-    particles.push({
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 0.5 + Math.random() * 0.4,
-      maxLife: 0.5 + Math.random() * 0.4,
-      radius: 4 + Math.random() * 5,
-      color,
-    });
-  }
-}
-
-function spawnScorePopup(x, y) {
-  scorePopups.push({
-    x, y,
-    life: 0.7,
-    maxLife: 0.7,
-  });
-}
-
-// ============================================================
-//  Init / Reset
-// ============================================================
-function initGame() {
-  blocks = [];
-  floatPhases = [];
-  particles = [];
-  scorePopups = [];
-  shakeAmount = 0;
-  score = 0;
-  currentBlockIdx = 0;
-
-  // Create two initial blocks so the player has a target
-  const b1 = createBlock(null);
-  blocks.push(b1);
-
-  // Place player centered on the first block
-  player.x = b1.x + BLOCK_W / 2;
-  player.y = b1.y - PLAYER_H;
-  player.vx = 0;
-  player.vy = 0;
-
-  // Generate the second block
-  blocks.push(createBlock(b1));
-
-  cameraX = b1.x + BLOCK_W / 2 - W * 0.05;
-  state = 'ready';
-  chargePower = 0;
-
-  ensureBlocksAhead();
-}
-
-// ============================================================
-//  Input handling
-// ============================================================
-
-// Shared charge / launch logic, used by both pointer and keyboard
-function startCharge() {
-  if (state === 'gameover') {
-    initGame();
-    return;
-  }
-  if (state !== 'ready') return;
-  state = 'charging';
-  chargeStart = performance.now();
-  chargePower = 0;
-}
-
-function releaseCharge() {
-  if (state !== 'charging') return;
-
-  const elapsed = performance.now() - chargeStart;
-  const clamped = Math.max(50, Math.min(elapsed, CHARGE_MAX_MS));
-  chargePower = clamped / CHARGE_MAX_MS; // 0..1
-
-  // Launch the player
-  player.vx = POWER_MIN_VX + chargePower * (POWER_MAX_VX - POWER_MIN_VX);
-  player.vy = -(POWER_MIN_VY + chargePower * (POWER_MAX_VY - POWER_MIN_VY));
-
-  state = 'jumping';
-  hint.style.opacity = '0';
-}
-
-// Pointer (mouse / touch)
-function onPointerDown(e) {
-  e.preventDefault();
-  startCharge();
-}
-
-function onPointerUp(e) {
-  e.preventDefault();
-  releaseCharge();
-}
-
-function onPointerCancel(e) {
-  e.preventDefault();
-  releaseCharge();
-}
-
-canvas.addEventListener('pointerdown', onPointerDown);
-canvas.addEventListener('pointerup', onPointerUp);
-canvas.addEventListener('pointercancel', onPointerCancel);
-canvas.addEventListener('pointerleave', onPointerCancel);
-
-// Prevent context menu on long press
-canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-// Keyboard (space bar)
-let spacePressed = false;
-
-function onKeyDown(e) {
-  if (e.code === 'Space' || e.key === ' ') {
-    e.preventDefault();
-    if (spacePressed) return; // ignore key repeat
-    spacePressed = true;
-    startCharge();
-  }
-}
-
-function onKeyUp(e) {
-  if (e.code === 'Space' || e.key === ' ') {
-    e.preventDefault();
-    spacePressed = false;
-    releaseCharge();
-  }
-}
-
-window.addEventListener('keydown', onKeyDown);
-window.addEventListener('keyup', onKeyUp);
-
-// ============================================================
-//  Update
-// ============================================================
-function update(dtSec) {
-  // Cap dt to avoid physics explosions on tab switch
-  if (dtSec > 0.1) dtSec = 0.1;
-
-  const time = performance.now() / 1000;
-
-  // Update particles
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx * dtSec;
-    p.y += p.vy * dtSec;
-    p.vy += GRAVITY * 0.6 * dtSec;
-    p.life -= dtSec;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-
-  // Update score popups
-  for (let i = scorePopups.length - 1; i >= 0; i--) {
-    const s = scorePopups[i];
-    s.y -= 60 * dtSec;
-    s.life -= dtSec;
-    if (s.life <= 0) scorePopups.splice(i, 1);
-  }
-
-  // Screen shake decay
-  if (shakeAmount > 0.01) {
-    shakeAmount *= Math.pow(0.02, dtSec); // exponential decay
-  } else {
-    shakeAmount = 0;
-  }
-
-  if (state === 'charging') {
-    const elapsed = performance.now() - chargeStart;
-    chargePower = Math.min(elapsed / CHARGE_MAX_MS, 1.0);
-  }
-
-  if (state === 'jumping') {
-    // Apply gravity
-    player.vy += GRAVITY * dtSec;
-    player.x += player.vx * dtSec;
-    player.y += player.vy * dtSec;
-
-    // Check landing on any block ahead of the current one
-    checkLanding(dtSec);
-
-    // Check if player fell far below ground plane (feet dropped below y=300)
-    if (player.y + PLAYER_H > 300) {
-      gameOver();
-    }
-  }
-
-  // Update camera (smooth follow)
-  updateCamera(dtSec);
-}
-
-function checkLanding(dtSec) {
-  const pBottom = player.y + PLAYER_H;
-  const pCenterX = player.x;
-
-  // Only check blocks the player isn't already on
-  for (let i = currentBlockIdx; i < blocks.length; i++) {
-    const b = blocks[i];
-    const bTop = b.y;
-
-    // Must be moving downward and bottom crossing block top
-    if (player.vy > 0 && pBottom >= bTop && pBottom - player.vy * dtSec <= bTop + 12) {
-      // Horizontal overlap check
-      if (pCenterX > b.x - PLAYER_W * 0.4 && pCenterX < b.x + BLOCK_W + PLAYER_W * 0.4) {
-        landOnBlock(i, b);
-        return;
-      }
-    }
-  }
-}
-
-function landOnBlock(idx, block) {
-  player.y = block.y - PLAYER_H;
-  player.x = Math.max(block.x - PLAYER_W * 0.3, Math.min(player.x, block.x + BLOCK_W + PLAYER_W * 0.3));
-  player.vx = 0;
-  player.vy = 0;
-
-  if (idx > currentBlockIdx) {
-    // Landed on a new block — score!
-    score++;
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('jjHighScore', highScore);
-    }
-    spawnLandingParticles(player.x, block.y, block.color);
-    spawnScorePopup(player.x, block.y - 20);
-    shakeAmount = 3;
-    currentBlockIdx = idx;
-    ensureBlocksAhead();
-  } else {
-    // Landed back on same block (too-short jump) — just reset, no score
-    shakeAmount = 1;
-  }
-
-  state = 'ready';
-  hint.style.opacity = '1';
-  chargePower = 0;
-}
-
-function gameOver() {
-  state = 'gameover';
-  if (score > highScore) {
-    highScore = score;
-    localStorage.setItem('jjHighScore', highScore);
-  }
-}
-
-function updateCamera(dtSec) {
-  if (state === 'gameover') return;
-
-  let targetX;
-
-  if (state === 'jumping') {
-    targetX = player.x;
-  } else {
-    // Center between current and next block so both are visible
-    const curr = blocks[currentBlockIdx];
-    const next = blocks[currentBlockIdx + 1];
-    if (next) {
-      targetX = (curr.x + BLOCK_W / 2 + next.x + BLOCK_W / 2) / 2;
-    } else {
-      targetX = curr.x + BLOCK_W / 2;
-    }
-  }
-
-  const lerp = 1 - Math.pow(0.001, dtSec);
-  cameraX += (targetX - cameraX) * lerp;
-
-  if (blocks.length > 0) {
-    cameraX = Math.max(cameraX, blocks[0].x - W * 0.1);
-  }
-}
-
-// ============================================================
-//  Isometric projection
-// ============================================================
-function isoProject(x, y) {
-  const relX = x - cameraX;
-  return {
-    sx: W / 2 + relX * ISO_COS,
-    // y: larger = lower in world (original gravity convention)
-    // adding y pushes sy down → correctly maps world height to screen
-    sy: groundY + relX * ISO_SIN + y
-  };
-}
-
-// ============================================================
-//  Render
-// ============================================================
-function render(time) {
-  ctx.clearRect(0, 0, W, H);
-
-  // Subtle gradient background (sky → ground)
-  const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-  bgGrad.addColorStop(0, '#e2e7ec');
-  bgGrad.addColorStop(0.45, '#d7dde3');
-  bgGrad.addColorStop(1, '#c8cfd6');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, W, H);
-
-  // Apply screen shake (but NOT camera translate — isoProject handles camera)
-  let shakeX = 0, shakeY = 0;
-  if (shakeAmount > 0.01) {
-    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
-    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
-  }
-
-  ctx.save();
-  ctx.translate(shakeX, shakeY);
-
-  // Draw all blocks first
-  for (let i = 0; i < blocks.length; i++) {
-    drawBlock(blocks[i], i, time);
-  }
-
-  // Player shadow on top of current block (contact shadow)
-  if (state !== 'gameover') {
-    drawPlayerShadow();
-  }
-
-  // Player body on top
-  if (state !== 'gameover') {
-    drawPlayer(time);
-  }
-
-  // Particles & score popups — rendered in world space via isoProject
-  for (const p of particles) {
-    const alpha = p.life / p.maxLife;
-    const r = p.radius * (0.4 + alpha * 0.6);
-    const sp = isoProject(p.x, p.y);
-    if (p.color.startsWith('#')) {
-      ctx.fillStyle = hexToRgba(p.color, alpha);
-    } else {
-      ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
-    }
-    ctx.beginPath();
-    ctx.arc(sp.sx, sp.sy, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  for (const s of scorePopups) {
-    const alpha = s.life / s.maxLife;
-    const sp = isoProject(s.x, s.y);
-    ctx.fillStyle = `rgba(140,150,160,${alpha})`;
-    ctx.font = 'bold 16px -apple-system, "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('+1', sp.sx, sp.sy);
-  }
-
-  ctx.restore();
-
-  // --- UI (screen space) ---
-  drawUI();
-
-  // Game over overlay
-  if (state === 'gameover') {
-    drawGameOver();
-  }
-}
-
-// ============================================================
-//  Isometric block rendering
-// ============================================================
-
-function drawBlockShadow(block) {
-  const cx = block.x + BLOCK_W / 2;
-  const by = block.y;
-  const hw = BLOCK_W / 2;
-  const hd = BLOCK_D / 2;
-
-  const shadowBase = isoProject(cx, by + BLOCK_THICK);
-  const ox = 12, oy = 16;
-  const cs = shadowBase.sx + ox;
-  const ct = shadowBase.sy + oy;
-
-  const dx = hw * ISO_COS;  // half diamond width
-  const dy = hw * ISO_SIN;  // vertical shear
-  const ux = hd * ISO_SIN;  // depth x offset
-  const uy = hd * ISO_COS;  // depth y offset
-
-  // Core shadow — matches block footprint exactly, offset down-right
-  ctx.fillStyle = 'rgba(0,0,0,0.17)';
-  ctx.beginPath();
-  ctx.moveTo(cs + dx, ct + dy);
-  ctx.lineTo(cs - ux, ct + uy);
-  ctx.lineTo(cs - dx, ct - dy);
-  ctx.lineTo(cs + ux, ct - uy);
-  ctx.closePath();
-  ctx.fill();
-
-  // Soft outer halo
-  ctx.fillStyle = 'rgba(0,0,0,0.06)';
-  ctx.beginPath();
-  ctx.moveTo(cs + dx + 8, ct + dy + 4);
-  ctx.lineTo(cs - ux - 8, ct + uy + 4);
-  ctx.lineTo(cs - dx - 8, ct - dy + 4);
-  ctx.lineTo(cs + ux + 8, ct - uy + 4);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawBlock(block, idx, time) {
-  const floatY = Math.sin(time * 0.0008 + floatPhases[idx]) * 3.5;
-  const cx = block.x + BLOCK_W / 2;
-  const cy = block.y + floatY;
-  const top = isoProject(cx, cy);
-  const hw = BLOCK_W / 2;
-  const hd = BLOCK_D / 2;
-  const thick = BLOCK_THICK;
-
-  // Diamond vertices (CCW from right):
-  //   V_R — rightmost  (+hw, 0)
-  //   V_F — front      (0, +hd)
-  //   V_L — leftmost   (-hw, 0)
-  //   V_B — back       (0, -hd)
-  const V_R = { sx: top.sx + hw * ISO_COS,               sy: top.sy + hw * ISO_SIN };
-  const V_F = { sx: top.sx - hd * ISO_SIN,               sy: top.sy + hd * ISO_COS };
-  const V_L = { sx: top.sx - hw * ISO_COS,               sy: top.sy - hw * ISO_SIN };
-  const V_B = { sx: top.sx + hd * ISO_SIN,               sy: top.sy - hd * ISO_COS };
-
-  // Face colors — light from upper-left
-  const topC   = block.color;
-  const leftC  = darkenColor(block.color, 0.18);   // upper-left facing, medium
-  const rightC = darkenColor(block.color, 0.38);   // lower-right facing, dark
-
-  // Draw shadow on ground (behind block)
-  drawBlockShadow(block);
-
-  // Left face: V_L → V_B extruded down (faces upper-left, medium light)
-  ctx.fillStyle = leftC;
-  ctx.beginPath();
-  ctx.moveTo(V_L.sx, V_L.sy);
-  ctx.lineTo(V_B.sx, V_B.sy);
-  ctx.lineTo(V_B.sx, V_B.sy + thick);
-  ctx.lineTo(V_L.sx, V_L.sy + thick);
-  ctx.closePath();
-  ctx.fill();
-
-  // Right face: V_B → V_R extruded down (faces lower-right, in shadow)
-  ctx.fillStyle = rightC;
-  ctx.beginPath();
-  ctx.moveTo(V_B.sx, V_B.sy);
-  ctx.lineTo(V_R.sx, V_R.sy);
-  ctx.lineTo(V_R.sx, V_R.sy + thick);
-  ctx.lineTo(V_B.sx, V_B.sy + thick);
-  ctx.closePath();
-  ctx.fill();
-
-  // Edge line between left and right faces for definition
-  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.moveTo(V_B.sx, V_B.sy);
-  ctx.lineTo(V_B.sx, V_B.sy + thick);
-  ctx.stroke();
-
-  // Top face (diamond) — brightest
-  ctx.fillStyle = topC;
-  ctx.beginPath();
-  ctx.moveTo(V_R.sx, V_R.sy);
-  ctx.lineTo(V_F.sx, V_F.sy);
-  ctx.lineTo(V_L.sx, V_L.sy);
-  ctx.lineTo(V_B.sx, V_B.sy);
-  ctx.closePath();
-  ctx.fill();
-
-  // Top face crisp edge stroke
-  ctx.strokeStyle = 'rgba(0,0,0,0.09)';
-  ctx.lineWidth = 0.7;
-  ctx.stroke();
-
-  // Subtle top face highlight near V_L (closest to light source)
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  ctx.beginPath();
-  ctx.moveTo(V_L.sx, V_L.sy);
-  ctx.lineTo(V_L.sx + 8, V_L.sy + 4);
-  ctx.lineTo(top.sx - 2, top.sy + 2);
-  ctx.lineTo(top.sx - 4, top.sy - 4);
-  ctx.closePath();
-  ctx.fill();
-
-  // Target block pulse while charging
-  if (idx === currentBlockIdx + 1 && state === 'charging') {
-    const pulse = Math.sin(time * 0.01) * 0.12 + 0.12;
-    ctx.fillStyle = `rgba(255,255,255,${pulse})`;
-    ctx.beginPath();
-    ctx.moveTo(V_R.sx, V_R.sy);
-    ctx.lineTo(V_F.sx, V_F.sy);
-    ctx.lineTo(V_L.sx, V_L.sy);
-    ctx.lineTo(V_B.sx, V_B.sy);
-    ctx.closePath();
-    ctx.fill();
-  }
-}
-
-// ============================================================
-//  Isometric player rendering
-// ============================================================
-
-function drawPlayerShadow() {
-  // Contact shadow at the player's feet (on block surface)
-  const feetY = player.y + PLAYER_H;
-  const base = isoProject(player.x, feetY);
-  const r = PLAYER_W * 0.44;
-  ctx.fillStyle = 'rgba(0,0,0,0.13)';
-  ctx.beginPath();
-  ctx.ellipse(base.sx + 3, base.sy + 3, r, r * 0.38, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawPlayer(time) {
-  const feetY = player.y + PLAYER_H;
-  const base = isoProject(player.x, feetY);
-  let bodyH = PLAYER_H;
-  let bodyW = PLAYER_W;
-  let squish = 0;
-
-  // Charging squish
-  if (state === 'charging') {
-    squish = chargePower * 0.4;
-    bodyW += PLAYER_W * squish * 0.7;
-    bodyH -= PLAYER_H * squish * 0.4;
-  }
-
-  // Landing squish
-  const landSquish = Math.min(shakeAmount / 6, 0.22);
-  if (landSquish > 0.001 && state !== 'charging') {
-    bodyW += PLAYER_W * landSquish * 0.6;
-    bodyH -= PLAYER_H * landSquish * 0.4;
-  }
-
-  const sx = base.sx;
-  const sy = base.sy;
-  const bodyTop = sy - bodyH;
-
-  // Charging glow ring
-  if (state === 'charging' && chargePower > 0.1) {
-    const glowAlpha = chargePower * 0.22;
-    const grad = ctx.createRadialGradient(sx, bodyTop + bodyH * 0.4, bodyW * 0.3, sx, bodyTop + bodyH * 0.4, bodyW * 1.1);
-    grad.addColorStop(0, `rgba(200,180,220,${glowAlpha})`);
-    grad.addColorStop(1, 'rgba(200,180,220,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(sx, bodyTop + bodyH * 0.4, bodyW * 1.1, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Body — cylinder (rounded rect)
-  const bodyGrad = ctx.createLinearGradient(sx - bodyW / 2, 0, sx + bodyW / 2, 0);
-  bodyGrad.addColorStop(0, PLAYER_DARK);
-  bodyGrad.addColorStop(0.3, PLAYER_COLOR);
-  bodyGrad.addColorStop(0.55, PLAYER_LIGHT);
-  bodyGrad.addColorStop(0.8, PLAYER_COLOR);
-  bodyGrad.addColorStop(1, PLAYER_DARK);
-  ctx.fillStyle = bodyGrad;
-
-  const br = bodyW * 0.44;  // body roundness
-  ctx.beginPath();
-  ctx.moveTo(sx - bodyW / 2 + br, bodyTop);
-  ctx.lineTo(sx + bodyW / 2 - br, bodyTop);
-  ctx.arcTo(sx + bodyW / 2, bodyTop, sx + bodyW / 2, bodyTop + br, br);
-  ctx.lineTo(sx + bodyW / 2, sy - br);
-  ctx.arcTo(sx + bodyW / 2, sy, sx + bodyW / 2 - br, sy, br);
-  ctx.lineTo(sx - bodyW / 2 + br, sy);
-  ctx.arcTo(sx - bodyW / 2, sy, sx - bodyW / 2, sy - br, br);
-  ctx.lineTo(sx - bodyW / 2, bodyTop + br);
-  ctx.arcTo(sx - bodyW / 2, bodyTop, sx - bodyW / 2 + br, bodyTop, br);
-  ctx.closePath();
-  ctx.fill();
-
-  // Head — sphere on top of body
-  const headR = bodyW * 0.54;
-  const headY = bodyTop - headR * 0.3;
-
-  const headGrad = ctx.createRadialGradient(
-    sx - headR * 0.25, headY - headR * 0.3, headR * 0.1,
-    sx, headY, headR
-  );
-  headGrad.addColorStop(0, '#c8b8e0');
-  headGrad.addColorStop(0.35, PLAYER_COLOR);
-  headGrad.addColorStop(0.75, PLAYER_DARK);
-  headGrad.addColorStop(1, '#3a2a58');
-  ctx.fillStyle = headGrad;
-  ctx.beginPath();
-  ctx.arc(sx, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawUI() {
-  // Score — top center
-  ctx.fillStyle = '#8898a0';
-  ctx.font = '600 28px -apple-system, "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText(score, W / 2, Math.max(28, H * 0.06));
-
-  // High score — top right
-  ctx.fillStyle = '#a0a8b0';
-  ctx.font = '500 14px -apple-system, "PingFang SC", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(`最高 ${highScore}`, W - 24, Math.max(34, H * 0.06 + 6));
-
-  // Charge power bar — only when charging
-  if (state === 'charging') {
-    const barW = 80;
-    const barH = 4;
-    const barX = W / 2 - barW / 2;
-    const barY = Math.min(H * 0.12, 80);
-
-    // Bar background
-    ctx.fillStyle = 'rgba(140,150,160,0.18)';
-    roundRect(barX, barY, barW, barH, barH / 2);
-    ctx.fill();
-
-    // Bar fill
-    const fillW = barW * chargePower;
-    let barColor;
-    if (chargePower < 0.4) {
-      barColor = '#a8b8b0';
-    } else if (chargePower < 0.75) {
-      barColor = '#c8b0a0';
-    } else {
-      barColor = '#c8a098';
-    }
-    ctx.fillStyle = barColor;
-    roundRect(barX, barY, fillW, barH, barH / 2);
-    ctx.fill();
-  }
-}
-
-function drawGameOver() {
-  // Dim overlay
-  ctx.fillStyle = 'rgba(40,50,60,0.4)';
-  ctx.fillRect(0, 0, W, H);
-
-  // Card
-  const cardW = Math.min(280, W * 0.72);
-  const cardH = 170;
-  const cardX = W / 2 - cardW / 2;
-  const cardY = H / 2 - cardH / 2 - 20;
-
-  ctx.fillStyle = 'rgba(248,250,252,0.96)';
-  roundRect(cardX, cardY, cardW, cardH, 16);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(160,170,180,0.4)';
-  ctx.lineWidth = 1;
-  roundRect(cardX, cardY, cardW, cardH, 16);
-  ctx.stroke();
-
-  ctx.fillStyle = '#809098';
-  ctx.font = '600 20px -apple-system, "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('游戏结束', W / 2, cardY + 38);
-
-  ctx.fillStyle = '#607078';
-  ctx.font = '600 40px -apple-system, "PingFang SC", sans-serif';
-  ctx.fillText(score, W / 2, cardY + 84);
-
-  ctx.fillStyle = '#8898a0';
-  ctx.font = '500 14px -apple-system, "PingFang SC", sans-serif';
-  ctx.fillText(`最高分 ${highScore}`, W / 2, cardY + 120);
-
-  ctx.fillStyle = '#a0a8b0';
-  ctx.font = '500 14px -apple-system, "PingFang SC", sans-serif';
-  ctx.fillText('点击画面重新开始', W / 2, cardY + 150);
-}
-
-// ============================================================
-//  Helpers
-// ============================================================
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
-
-function darkenColor(hex, amount) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgb(${Math.round(r * (1 - amount))},${Math.round(g * (1 - amount))},${Math.round(b * (1 - amount))})`;
-}
-
-function lightenColor(hex, amount) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgb(${Math.round(r + (255 - r) * amount)},${Math.round(g + (255 - g) * amount)},${Math.round(b + (255 - b) * amount)})`;
-}
-
-function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-// ============================================================
-//  Game loop
-// ============================================================
-let lastTime = performance.now();
-
-function gameLoop(timestamp) {
-  const dtMs = timestamp - lastTime;
-  const dtSec = dtMs / 1000;
-  lastTime = timestamp;
-
-  update(dtSec);
-  render(timestamp);
-  requestAnimationFrame(gameLoop);
-}
-
-// ============================================================
-//  Start
-// ============================================================
-initGame();
-lastTime = performance.now();
-requestAnimationFrame(gameLoop);
-</script>
-
+    <canvas id="game"></canvas>
+    <div id="hint">按住屏幕或空格蓄力 · 松开跳跃</div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const hint = document.getElementById('hint');
+
+        let W, H, groundY;
+        let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+        function resize() {
+            W = canvas.width = window.innerWidth * dpr;
+            H = canvas.height = window.innerHeight * dpr;
+            canvas.style.width = window.innerWidth + 'px';
+            canvas.style.height = window.innerHeight + 'px';
+            groundY = H * 0.66;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
+
+        window.addEventListener('resize', resize);
+        window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+        resize();
+
+        const GRAVITY = 1050;
+        const CHARGE_MAX_MS = 1500;
+        const POWER_MIN_VX = 155;
+        const POWER_MAX_VX = 340;
+        const POWER_MIN_VY = 170;
+        const POWER_MAX_VY = 470;
+
+        const ISO_ANGLE = Math.atan(0.5);
+        const ISO_COS = Math.cos(ISO_ANGLE);
+        const ISO_SIN = Math.sin(ISO_ANGLE);
+
+        const BLOCK_W = 105;
+        const BLOCK_D = 105;
+        const BLOCK_THICK = 72;
+        const BLOCK_MIN_GAP = 65;
+        const BLOCK_MAX_GAP = 155;
+        const BLOCK_Y_VARY = 22;
+
+        const PLAYER_W = 19;
+        const PLAYER_H = 30;
+        const PLAYER_COLOR = '#3f4b4a';
+        const PLAYER_DARK = '#25302f';
+        const PLAYER_LIGHT = '#60746d';
+        const PLAYER_HEAD_HIGHLIGHT = '#c1d5cb';
+        const PLAYER_MID = '#4c5f59';
+
+        const BLOCK_PALETTES = [
+            { top: '#a9c083', left: '#829460', front: '#6f7c58', right: '#596848', edge: '#d7e5bd', speck: '#65754c' },
+            { top: '#b7c9a4', left: '#8ea079', front: '#768768', right: '#60725a', edge: '#e0ead1', speck: '#70805f' },
+            { top: '#c6b79b', left: '#9d8d73', front: '#817158', right: '#685b48', edge: '#eadfc4', speck: '#74634b' },
+            { top: '#aeb8ad', left: '#879286', front: '#6f7b70', right: '#59645c', edge: '#d9ded6', speck: '#657063' },
+            { top: '#c8aa84', left: '#a37e5d', front: '#856449', right: '#6b503c', edge: '#ecd0a7', speck: '#7d5d42' },
+            { top: '#9fb99a', left: '#789272', front: '#637a60', right: '#50644f', edge: '#d2e2cd', speck: '#5f7559' },
+            { top: '#c0c3a2', left: '#949873', front: '#7b7e61', right: '#62664f', edge: '#e6e7c9', speck: '#737758' },
+            { top: '#b5aa99', left: '#8e8374', front: '#766b5f', right: '#5f554c', edge: '#ded5c8', speck: '#6c6257' },
+        ];
+
+        let state = 'ready';
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('jjHighScore_v2')) || 0;
+        let comboCount = 0;
+
+        let player = {
+            x: 0,
+            y: 0,
+            vx: 0,
+            vy: 0,
+            floatOffset: 0,
+            tilt: 0,
+            tiltVel: 0,
+            squashScale: 1,
+            stretchScale: 1,
+        };
+
+        let currentBlockIdx = 0;
+        let cameraX = 0;
+        let cameraSettleTimer = 0;
+        let chargeStart = 0;
+        let chargePower = 0;
+
+        let particles = [];
+        let scorePopups = [];
+        let shakeAmount = 0;
+        let blockBounces = [];
+        let floatPhases = [];
+        let shadowTrails = [];
+        let blocks = [];
+
+        function createBlock(prevBlock, forceGap) {
+            const gap = forceGap ?? (BLOCK_MIN_GAP + Math.random() * (BLOCK_MAX_GAP - BLOCK_MIN_GAP));
+            const x = prevBlock ? prevBlock.x + BLOCK_W + gap : W * 0.18;
+            const baseY = prevBlock ? prevBlock.y : 0;
+            const y = baseY + (Math.random() - 0.5) * BLOCK_Y_VARY * 0.55;
+            const palette = BLOCK_PALETTES[Math.floor(Math.random() * BLOCK_PALETTES.length)];
+            floatPhases.push(Math.random() * Math.PI * 2);
+            return {
+                x,
+                y,
+                color: palette.top,
+                palette,
+                detailSeed: Math.random() * 10000,
+                grassOffset: Math.random() * 100,
+            };
+        }
+
+        function ensureBlocksAhead() {
+            while (blocks.length === 0 || blocks[blocks.length - 1].x < cameraX + W * 1.6) {
+                const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+                blocks.push(createBlock(prev));
+            }
+            while (blocks.length > 3 && blocks[0].x + BLOCK_W < cameraX - W * 0.6) {
+                blocks.shift();
+                floatPhases.shift();
+                currentBlockIdx = Math.max(0, currentBlockIdx - 1);
+                blockBounces = blockBounces.filter(b => b.idx >= 0).map(b => ({ ...b, idx: b.idx - 1 }));
+            }
+        }
+
+        function spawnLandingParticles(x, y, color) {
+            for (let i = 0; i < 18; i++) {
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.85;
+                const speed = 60 + Math.random() * 200;
+                particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 0.3 + Math.random() * 0.55,
+                    maxLife: 0.3 + Math.random() * 0.55,
+                    radius: 1.8 + Math.random() * 4.5,
+                    color,
+                    type: 'debris',
+                });
+            }
+
+            for (let i = 0; i < 10; i++) {
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.6;
+                const speed = 90 + Math.random() * 240;
+                particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 50,
+                    life: 0.18 + Math.random() * 0.32,
+                    maxLife: 0.18 + Math.random() * 0.32,
+                    radius: 1 + Math.random() * 2.2,
+                    color: '#fffef8',
+                    type: 'spark',
+                });
+            }
+        }
+
+        function spawnScorePopup(x, y, text) {
+            scorePopups.push({ x, y, life: 0.85, maxLife: 0.85, text: text || '+1' });
+        }
+
+        function addShadowTrail(x, y) {
+            shadowTrails.push({ x, y, life: 0.25, maxLife: 0.25, alpha: 0.35 });
+        }
+
+        function initGame() {
+            blocks = [];
+            floatPhases = [];
+            particles = [];
+            scorePopups = [];
+            blockBounces = [];
+            shadowTrails = [];
+            shakeAmount = 0;
+            score = 0;
+            comboCount = 0;
+            currentBlockIdx = 0;
+            cameraSettleTimer = 0;
+
+            const b1 = createBlock(null);
+            blocks.push(b1);
+
+            player.x = b1.x + BLOCK_W / 2;
+            player.y = b1.y - PLAYER_H;
+            player.vx = 0;
+            player.vy = 0;
+            player.floatOffset = 0;
+            player.tilt = 0;
+            player.tiltVel = 0;
+            player.squashScale = 1;
+            player.stretchScale = 1;
+
+            blocks.push(createBlock(b1));
+            cameraX = b1.x + BLOCK_W / 2 - W * 0.04;
+            state = 'ready';
+            chargePower = 0;
+            ensureBlocksAhead();
+        }
+
+        function startCharge() {
+            if (state === 'gameover') {
+                initGame();
+                hint.style.opacity = '1';
+                return;
+            }
+            if (state !== 'ready') return;
+            state = 'charging';
+            chargeStart = performance.now();
+            chargePower = 0;
+            player.squashScale = 1;
+            player.stretchScale = 1;
+        }
+
+        function releaseCharge() {
+            if (state !== 'charging') return;
+
+            const elapsed = performance.now() - chargeStart;
+            const clamped = Math.max(40, Math.min(elapsed, CHARGE_MAX_MS));
+            chargePower = clamped / CHARGE_MAX_MS;
+
+            player.vx = POWER_MIN_VX + chargePower * (POWER_MAX_VX - POWER_MIN_VX);
+            player.vy = -(POWER_MIN_VY + chargePower * (POWER_MAX_VY - POWER_MIN_VY));
+            player.tiltVel = (player.vx / POWER_MAX_VX) * 5.8;
+            player.tilt = 0;
+            player.squashScale = 1;
+            player.stretchScale = 1;
+
+            state = 'jumping';
+            hint.style.opacity = '0';
+        }
+
+        function onPointerDown(e) {
+            e.preventDefault();
+            startCharge();
+        }
+
+        function onPointerUp(e) {
+            e.preventDefault();
+            releaseCharge();
+        }
+
+        function onPointerCancel(e) {
+            e.preventDefault();
+            releaseCharge();
+        }
+
+        canvas.addEventListener('pointerdown', onPointerDown);
+        canvas.addEventListener('pointerup', onPointerUp);
+        canvas.addEventListener('pointercancel', onPointerCancel);
+        canvas.addEventListener('pointerleave', onPointerCancel);
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        let spacePressed = false;
+
+        window.addEventListener('keydown', e => {
+            if (e.code === 'Space' || e.key === ' ') {
+                e.preventDefault();
+                if (spacePressed) return;
+                spacePressed = true;
+                startCharge();
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            if (e.code === 'Space' || e.key === ' ') {
+                e.preventDefault();
+                spacePressed = false;
+                releaseCharge();
+            }
+        });
+
+        function update(dtSec) {
+            if (dtSec > 0.12) dtSec = 0.12;
+            const timeMs = performance.now();
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx * dtSec;
+                p.y += p.vy * dtSec;
+                p.vy += GRAVITY * 0.45 * dtSec;
+                p.life -= dtSec;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            for (let i = shadowTrails.length - 1; i >= 0; i--) {
+                shadowTrails[i].life -= dtSec;
+                if (shadowTrails[i].life <= 0) shadowTrails.splice(i, 1);
+            }
+
+            for (let i = scorePopups.length - 1; i >= 0; i--) {
+                const s = scorePopups[i];
+                s.y -= 55 * dtSec;
+                s.x += 12 * dtSec;
+                s.life -= dtSec;
+                if (s.life <= 0) scorePopups.splice(i, 1);
+            }
+
+            if (shakeAmount > 0.008) {
+                shakeAmount *= Math.pow(0.012, dtSec);
+            } else {
+                shakeAmount = 0;
+            }
+
+            for (let i = blockBounces.length - 1; i >= 0; i--) {
+                blockBounces[i].elapsed += dtSec;
+                if (blockBounces[i].elapsed > blockBounces[i].duration) {
+                    blockBounces.splice(i, 1);
+                }
+            }
+
+            if (state === 'charging') {
+                chargePower = Math.min((performance.now() - chargeStart) / CHARGE_MAX_MS, 1.0);
+                player.floatOffset = getBlockFloat(currentBlockIdx, timeMs);
+                player.squashScale = 1 + chargePower * 0.4;
+                player.stretchScale = 1 - chargePower * 0.22;
+            }
+
+            if (state === 'ready') {
+                player.floatOffset = getBlockFloat(currentBlockIdx, timeMs);
+                player.squashScale += (1 - player.squashScale) * Math.min(1, dtSec * 16);
+                player.stretchScale += (1 - player.stretchScale) * Math.min(1, dtSec * 16);
+            }
+
+            if (state === 'jumping') {
+                player.vy += GRAVITY * dtSec;
+                player.x += player.vx * dtSec;
+                player.y += player.vy * dtSec;
+                player.tilt += player.tiltVel * dtSec;
+                player.squashScale += (1 - player.squashScale) * Math.min(1, dtSec * 10);
+                player.stretchScale += (1 - player.stretchScale) * Math.min(1, dtSec * 10);
+
+                if (player.vy < -80) {
+                    player.stretchScale = Math.min(1.25, 1 + Math.abs(player.vy) / 2000);
+                    player.squashScale = Math.max(0.78, 1 - Math.abs(player.vy) / 3500);
+                }
+
+                if (player.y + PLAYER_H > H + 400) gameOver();
+                checkLanding(dtSec);
+            }
+
+            if (cameraSettleTimer > 0) {
+                cameraSettleTimer -= dtSec;
+                if (cameraSettleTimer < 0) cameraSettleTimer = 0;
+            }
+
+            updateCamera(dtSec);
+
+            if (state !== 'jumping' && Math.abs(player.tilt) > 0.0008) {
+                player.tilt *= Math.pow(0.0003, dtSec);
+            } else if (state !== 'jumping') {
+                player.tilt = 0;
+            }
+
+            if (state === 'jumping' && Math.abs(player.tiltVel) > 0.01 && player.vy > 0) {
+                player.tiltVel *= Math.pow(0.02, dtSec);
+            }
+        }
+
+        function checkLanding(dtSec) {
+            const pBottom = player.y + PLAYER_H;
+            const pCenterX = player.x;
+
+            for (let i = currentBlockIdx; i < blocks.length; i++) {
+                const b = blocks[i];
+                const bTop = b.y;
+
+                if (player.vy > 0 && pBottom >= bTop && pBottom - player.vy * dtSec <= bTop + 20) {
+                    const margin = PLAYER_W * 0.4;
+                    if (pCenterX > b.x - margin && pCenterX < b.x + BLOCK_W + margin) {
+                        landOnBlock(i, b);
+                        return;
+                    }
+                }
+            }
+        }
+
+        function landOnBlock(idx, block) {
+            player.y = block.y - PLAYER_H;
+            player.x = Math.max(block.x - PLAYER_W * 0.35, Math.min(player.x, block.x + BLOCK_W + PLAYER_W * 0.35));
+            player.vx = 0;
+            player.vy = 0;
+            player.squashScale = 1.22;
+            player.stretchScale = 0.72;
+            player.tiltVel = 0;
+
+            if (idx > currentBlockIdx) {
+                const centerX = block.x + BLOCK_W / 2;
+                const distFromCenter = Math.abs(player.x - centerX) / (BLOCK_W / 2);
+                let bonusText = '+1';
+
+                if (distFromCenter < 0.25) {
+                    comboCount++;
+                    const bonus = 1 + comboCount;
+                    bonusText = '+' + bonus;
+                    score += bonus;
+                } else {
+                    comboCount = 0;
+                    score++;
+                }
+
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('jjHighScore_v2', highScore);
+                }
+
+                spawnLandingParticles(player.x, block.y, block.color);
+                spawnScorePopup(player.x, block.y - 22, bonusText);
+                shakeAmount = distFromCenter < 0.25 ? 5.5 : 3.2;
+                blockBounces.push({ idx, elapsed: 0, duration: 0.4 });
+                currentBlockIdx = idx;
+                cameraSettleTimer = 0.28;
+                ensureBlocksAhead();
+            } else {
+                shakeAmount = 1.0;
+                blockBounces.push({ idx, elapsed: 0, duration: 0.18 });
+                comboCount = 0;
+                addShadowTrail(player.x, block.y);
+            }
+
+            state = 'ready';
+            hint.style.opacity = '1';
+            chargePower = 0;
+        }
+
+        function gameOver() {
+            state = 'gameover';
+            player.tilt = 0;
+            player.tiltVel = 0;
+            player.squashScale = 1;
+            player.stretchScale = 1;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('jjHighScore_v2', highScore);
+            }
+            comboCount = 0;
+        }
+
+        function updateCamera(dtSec) {
+            if (state === 'gameover') return;
+
+            let targetX;
+
+            if (state === 'jumping') {
+                targetX = player.x + player.vx * 0.22;
+            } else {
+                const curr = blocks[currentBlockIdx];
+                const next = blocks[currentBlockIdx + 1];
+                if (next) {
+                    targetX = (curr.x + BLOCK_W / 2 + next.x + BLOCK_W / 2) / 2;
+                } else {
+                    targetX = curr.x + BLOCK_W / 2;
+                }
+            }
+
+            const lerpFactor = cameraSettleTimer > 0 ? 0.00006 : 0.00025;
+            const lerp = 1 - Math.pow(lerpFactor, dtSec);
+            cameraX += (targetX - cameraX) * lerp;
+
+            if (blocks.length > 0) {
+                cameraX = Math.max(cameraX, blocks[0].x - W * 0.12);
+            }
+        }
+
+        function isoProject(x, y) {
+            const relX = x - cameraX;
+            return {
+                sx: W / 2 + relX * ISO_COS,
+                sy: groundY + relX * ISO_SIN + y
+            };
+        }
+
+        function getBlockFloat(idx, time) {
+            if (idx >= floatPhases.length) return 0;
+            return Math.sin(time * 0.0007 + floatPhases[idx]) * 3.8;
+        }
+
+        function darkenColor(hex, amount) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgb(${Math.round(r * (1 - amount))},${Math.round(g * (1 - amount))},${Math.round(b * (1 - amount))})`;
+        }
+
+        function lightenColor(hex, amount) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgb(${Math.round(r + (255 - r) * amount)},${Math.round(g + (255 - g) * amount)},${Math.round(b + (255 - b) * amount)})`;
+        }
+
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+        }
+
+        function hash01(seed) {
+            const x = Math.sin(seed * 12.9898) * 43758.5453;
+            return x - Math.floor(x);
+        }
+
+        function roundRect(x, y, w, h, r) {
+            const radius = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + w - radius, y);
+            ctx.arcTo(x + w, y, x + w, y + radius, radius);
+            ctx.lineTo(x + w, y + h - radius);
+            ctx.arcTo(x + w, y + h, x + w - radius, y + h, radius);
+            ctx.lineTo(x + radius, y + h);
+            ctx.arcTo(x, y + h, x, y + h - radius, radius);
+            ctx.lineTo(x, y + radius);
+            ctx.arcTo(x, y, x + radius, y, radius);
+            ctx.closePath();
+        }
+
+        function drawPolygon(points, fillStyle, strokeStyle = null, lineWidth = 0.6) {
+            ctx.fillStyle = fillStyle;
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+            ctx.closePath();
+            ctx.fill();
+
+            if (strokeStyle) {
+                ctx.strokeStyle = strokeStyle;
+                ctx.lineWidth = lineWidth;
+                ctx.stroke();
+            }
+        }
+
+        function getBlockGeometry(block, idx, timestamp) {
+            const timeMs = timestamp || performance.now();
+            const floatY = getBlockFloat(idx, timeMs);
+
+            let bounceDY = 0;
+            let bounceSquish = 0;
+            for (const bb of blockBounces) {
+                if (bb.idx === idx) {
+                    const t = bb.elapsed / bb.duration;
+                    const env = Math.sin(t * Math.PI) * Math.exp(-t * 5);
+                    bounceDY = env * -12;
+                    bounceSquish = env * 0.10;
+                    break;
+                }
+            }
+
+            const center = isoProject(block.x + BLOCK_W / 2, block.y + floatY + bounceDY);
+            const h = BLOCK_THICK * (1 - bounceSquish);
+
+            const xAxis = {
+                x: BLOCK_W * 0.5 * ISO_COS,
+                y: BLOCK_W * 0.5 * ISO_SIN,
+            };
+
+            const zAxis = {
+                x: -BLOCK_D * 0.5 * ISO_SIN,
+                y: BLOCK_D * 0.5 * ISO_COS,
+            };
+
+            const R = { x: center.sx + xAxis.x, y: center.sy + xAxis.y };
+            const F = { x: center.sx + zAxis.x, y: center.sy + zAxis.y };
+            const L = { x: center.sx - xAxis.x, y: center.sy - xAxis.y };
+            const B = { x: center.sx - zAxis.x, y: center.sy - zAxis.y };
+
+            const Rb = { x: R.x, y: R.y + h };
+            const Fb = { x: F.x, y: F.y + h };
+            const Lb = { x: L.x, y: L.y + h };
+            const Bb = { x: B.x, y: B.y + h };
+
+            return { R, F, L, B, Rb, Fb, Lb, Bb, center, h, xAxis, zAxis };
+        }
+
+        function drawBlockShadow(block, idx, timestamp) {
+            const g = getBlockGeometry(block, idx, timestamp);
+            const cx = (g.Fb.x + g.Rb.x + g.Bb.x + g.Lb.x) / 4;
+            const cy = Math.max(g.Fb.y, g.Rb.y, g.Bb.y, g.Lb.y) + 12;
+
+            ctx.save();
+            ctx.translate(cx + 14, cy + 9);
+            ctx.rotate(ISO_ANGLE);
+
+            ctx.fillStyle = 'rgba(0,0,0,0.028)';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, BLOCK_W * 0.78, BLOCK_W * 0.28, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(0,0,0,0.055)';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, BLOCK_W * 0.55, BLOCK_W * 0.19, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function clipPolygon(points) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+            ctx.closePath();
+            ctx.clip();
+        }
+
+        function drawBlockTopTexture(g, block, idx) {
+            const palette = block.palette || { speck: darkenColor(block.color, 0.35), edge: lightenColor(block.color, 0.32) };
+            const seed = block.detailSeed || idx * 91.7;
+
+            ctx.save();
+            clipPolygon([g.R, g.F, g.L, g.B]);
+
+            for (let i = 0; i < 16; i++) {
+                const a = hash01(seed + i * 13.1);
+                const b = hash01(seed + i * 29.7);
+                const u = (a - 0.5) * 1.32;
+                const v = (b - 0.5) * 1.32;
+                if (Math.abs(u) + Math.abs(v) > 0.94) continue;
+
+                const x = g.center.sx + g.xAxis.x * u + g.zAxis.x * v;
+                const y = g.center.sy + g.xAxis.y * u + g.zAxis.y * v;
+                const r = 1.2 + hash01(seed + i * 7.3) * 2.4;
+
+                ctx.fillStyle = hexToRgba(palette.speck, 0.08 + hash01(seed + i * 5.9) * 0.08);
+                ctx.beginPath();
+                ctx.ellipse(x, y, r * 1.6, r * 0.75, ISO_ANGLE * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            for (let i = 0; i < 5; i++) {
+                const t = 0.18 + i * 0.15 + hash01(seed + i * 41.2) * 0.04;
+                const x1 = g.L.x + (g.F.x - g.L.x) * t;
+                const y1 = g.L.y + (g.F.y - g.L.y) * t;
+                const x2 = g.B.x + (g.R.x - g.B.x) * t;
+                const y2 = g.B.y + (g.R.y - g.B.y) * t;
+
+                ctx.strokeStyle = `rgba(255,255,255,${0.035 + i * 0.006})`;
+                ctx.lineWidth = 0.55;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.quadraticCurveTo(g.center.sx, g.center.sy + (i - 2) * 1.4, x2, y2);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        function drawGrassRim(g, block) {
+            const palette = block.palette || { edge: lightenColor(block.color, 0.3) };
+            const wind = Math.sin(performance.now() * 0.0012 + block.grassOffset) * 0.8;
+
+            ctx.strokeStyle = hexToRgba(palette.edge, 0.72);
+            ctx.lineWidth = 1.35;
+            ctx.beginPath();
+            ctx.moveTo(g.L.x, g.L.y);
+            ctx.lineTo(g.F.x, g.F.y);
+            ctx.lineTo(g.R.x, g.R.y);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+            ctx.lineWidth = 0.75;
+            for (let i = 0; i < 10; i++) {
+                const t = i / 9;
+                const baseX = g.L.x + (g.R.x - g.L.x) * t;
+                const baseY = g.L.y + (g.R.y - g.L.y) * t;
+                const blade = 3 + hash01((block.detailSeed || 1) + i * 17) * 3;
+                ctx.beginPath();
+                ctx.moveTo(baseX, baseY + 1.5);
+                ctx.lineTo(baseX + wind, baseY - blade);
+                ctx.stroke();
+            }
+        }
+
+        function drawBlock(block, idx, timestamp) {
+            const timeMs = timestamp || performance.now();
+            const g = getBlockGeometry(block, idx, timeMs);
+
+            drawBlockShadow(block, idx, timeMs);
+
+            const palette = block.palette || {};
+            const topC = palette.top || block.color;
+            const faceLeftC = palette.left || darkenColor(block.color, 0.16);
+            const faceFrontC = palette.front || darkenColor(block.color, 0.27);
+            const faceRightC = palette.right || darkenColor(block.color, 0.38);
+
+            const leftGrad = ctx.createLinearGradient(g.L.x, g.L.y, g.F.x, g.F.y);
+            leftGrad.addColorStop(0, lightenColor(palette.left || block.color, 0.04));
+            leftGrad.addColorStop(1, faceFrontC);
+            drawPolygon([g.L, g.F, g.Fb, g.Lb], leftGrad, 'rgba(28,42,34,0.055)', 0.55);
+
+            const rightGrad = ctx.createLinearGradient(g.F.x, g.F.y, g.R.x, g.R.y);
+            rightGrad.addColorStop(0, faceLeftC);
+            rightGrad.addColorStop(1, faceRightC);
+            drawPolygon([g.F, g.R, g.Rb, g.Fb], rightGrad, 'rgba(28,42,34,0.075)', 0.55);
+
+            const backGrad = ctx.createLinearGradient(g.B.x, g.B.y, g.R.x, g.R.y);
+            backGrad.addColorStop(0, darkenColor(palette.front || block.color, 0.08));
+            backGrad.addColorStop(1, darkenColor(palette.right || block.color, 0.12));
+            drawPolygon([g.B, g.R, g.Rb, g.Bb], backGrad, 'rgba(28,42,34,0.045)', 0.45);
+
+            drawPolygon([g.R, g.F, g.L, g.B], topC, 'rgba(0,0,0,0.055)', 0.6);
+
+            const highlight = ctx.createLinearGradient(g.L.x, g.L.y, g.R.x, g.R.y);
+            highlight.addColorStop(0, 'rgba(255,255,255,0.28)');
+            highlight.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+            highlight.addColorStop(1, 'rgba(255,255,255,0)');
+            drawPolygon([g.R, g.F, g.L, g.B], highlight);
+            drawBlockTopTexture(g, block, idx);
+            drawGrassRim(g, block);
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+            ctx.lineWidth = 0.45;
+            ctx.beginPath();
+            ctx.moveTo(g.L.x, g.L.y);
+            ctx.lineTo(g.F.x, g.F.y);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'rgba(0,0,0,0.075)';
+            ctx.lineWidth = 0.55;
+            ctx.beginPath();
+            ctx.moveTo(g.F.x, g.F.y);
+            ctx.lineTo(g.Fb.x, g.Fb.y);
+            ctx.moveTo(g.R.x, g.R.y);
+            ctx.lineTo(g.Rb.x, g.Rb.y);
+            ctx.stroke();
+
+            if (idx === currentBlockIdx + 1 && state === 'charging') {
+                const pulse = Math.sin(timeMs * 0.011) * 0.08 + 0.10;
+                drawPolygon([g.R, g.F, g.L, g.B], `rgba(255,255,255,${pulse})`);
+            }
+        }
+
+        function drawPlayerShadow() {
+            const feetY = player.y + PLAYER_H + player.floatOffset;
+            const base = isoProject(player.x, feetY);
+            let heightFactor = 1;
+
+            if (state === 'jumping') {
+                const currentBlock = blocks[currentBlockIdx] || blocks[0];
+                const heightAboveBlock = Math.max(0, currentBlock.y - (player.y + PLAYER_H));
+                heightFactor = Math.max(0.2, 1 - heightAboveBlock / 250);
+            }
+
+            const rx = PLAYER_W * 0.5 * heightFactor;
+            const ry = PLAYER_W * 0.28 * heightFactor;
+            const alpha = 0.2 * heightFactor;
+
+            ctx.fillStyle = `rgba(0,0,0,${alpha * 0.25})`;
+            ctx.beginPath();
+            ctx.ellipse(base.sx + 5, base.sy + 6, rx * 1.6, ry * 1.6, -0.12, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+            ctx.beginPath();
+            ctx.ellipse(base.sx + 3, base.sy + 4, rx, ry, -0.12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawPlayer() {
+            const feetY = player.y + PLAYER_H + player.floatOffset;
+            const base = isoProject(player.x, feetY);
+            let bodyH = PLAYER_H;
+            let bodyW = PLAYER_W;
+
+            if (state === 'charging') {
+                const sq = chargePower * 0.5;
+                bodyW += PLAYER_W * sq * 0.8;
+                bodyH -= PLAYER_H * sq * 0.5;
+            }
+
+            if (player.squashScale > 1.01 && state !== 'charging') {
+                bodyW += PLAYER_W * (player.squashScale - 1) * 0.7;
+                bodyH -= PLAYER_H * (player.squashScale - 1) * 0.5;
+            }
+
+            if (player.stretchScale < 0.99 && state === 'jumping') {
+                bodyW -= PLAYER_W * (1 - player.stretchScale) * 0.5;
+                bodyH += PLAYER_H * (1 - player.stretchScale) * 0.6;
+            }
+
+            const sx = base.sx;
+            const sy = base.sy;
+            const bodyCenterY = sy - bodyH / 2;
+
+            ctx.save();
+            ctx.translate(sx, bodyCenterY);
+            if (Math.abs(player.tilt) > 0.0008) ctx.rotate(player.tilt);
+
+            if (state === 'charging' && chargePower > 0.05) {
+                const glowAlpha = chargePower * 0.18;
+                const grad = ctx.createRadialGradient(0, bodyH * 0.3, bodyW * 0.35, 0, bodyH * 0.3, bodyW * 1.5);
+                grad.addColorStop(0, `rgba(190,218,198,${glowAlpha})`);
+                grad.addColorStop(1, 'rgba(190,218,198,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, bodyH * 0.3, bodyW * 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            const halfW = bodyW / 2;
+            const halfH = bodyH / 2;
+            const topY = -halfH;
+            const botY = halfH;
+
+            const baseW = halfW * 1.22;
+            const baseH = bodyH * 0.14;
+            const baseTopY = botY - baseH;
+
+            const baseGrad = ctx.createLinearGradient(-baseW, 0, baseW, 0);
+            baseGrad.addColorStop(0, PLAYER_DARK);
+            baseGrad.addColorStop(0.25, PLAYER_MID);
+            baseGrad.addColorStop(0.5, PLAYER_LIGHT);
+            baseGrad.addColorStop(0.75, PLAYER_MID);
+            baseGrad.addColorStop(1, PLAYER_DARK);
+            ctx.fillStyle = baseGrad;
+            roundRect(-baseW, baseTopY, baseW * 2, baseH, baseW * 0.35);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+
+            const bodyGrad = ctx.createLinearGradient(-halfW, 0, halfW, 0);
+            bodyGrad.addColorStop(0, PLAYER_DARK);
+            bodyGrad.addColorStop(0.2, PLAYER_COLOR);
+            bodyGrad.addColorStop(0.48, PLAYER_LIGHT);
+            bodyGrad.addColorStop(0.75, PLAYER_COLOR);
+            bodyGrad.addColorStop(1, PLAYER_DARK);
+            ctx.fillStyle = bodyGrad;
+            roundRect(-halfW, topY, bodyW, baseTopY - topY, bodyW * 0.42);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+            ctx.lineWidth = 0.55;
+            ctx.beginPath();
+            ctx.moveTo(-halfW + 2.5, topY + bodyW * 0.42);
+            ctx.lineTo(-halfW + 2.5, baseTopY - bodyW * 0.42);
+            ctx.stroke();
+
+            const headR = bodyW * 0.56;
+            const headY = topY - headR * 0.22;
+            const headGrad = ctx.createRadialGradient(-headR * 0.38, headY - headR * 0.38, headR * 0.06, 0, headY, headR);
+            headGrad.addColorStop(0, PLAYER_HEAD_HIGHLIGHT);
+            headGrad.addColorStop(0.25, PLAYER_LIGHT);
+            headGrad.addColorStop(0.55, PLAYER_COLOR);
+            headGrad.addColorStop(0.82, PLAYER_DARK);
+            headGrad.addColorStop(1, '#17201f');
+            ctx.fillStyle = headGrad;
+            ctx.beginPath();
+            ctx.arc(0, headY, headR, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(255,255,255,0.14)';
+            ctx.beginPath();
+            ctx.arc(-headR * 0.32, headY - headR * 0.37, headR * 0.24, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(255,255,255,0.22)';
+            ctx.beginPath();
+            ctx.arc(-headR * 0.34, headY - headR * 0.4, headR * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function render(timestamp) {
+            ctx.clearRect(0, 0, W, H);
+            drawBackground();
+
+            let shakeX = 0;
+            let shakeY = 0;
+            if (shakeAmount > 0.008) {
+                shakeX = (Math.random() - 0.5) * shakeAmount * 2.2;
+                shakeY = (Math.random() - 0.5) * shakeAmount * 2.2;
+            }
+
+            ctx.save();
+            ctx.translate(shakeX, shakeY);
+
+            for (let i = 0; i < blocks.length; i++) {
+                drawBlock(blocks[i], i, timestamp);
+            }
+
+            for (const st of shadowTrails) {
+                const alpha = (st.life / st.maxLife) * st.alpha;
+                const sp = isoProject(st.x, st.y);
+                ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+                ctx.beginPath();
+                ctx.ellipse(sp.sx + 3, sp.sy + 4, PLAYER_W * 0.45, PLAYER_W * 0.25, -0.12, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            if (state !== 'gameover') drawPlayerShadow();
+            if (state !== 'gameover') drawPlayer();
+
+            for (const p of particles) {
+                const alpha = Math.max(0, p.life / p.maxLife);
+                const r = p.radius * (0.25 + alpha * 0.75);
+                const sp = isoProject(p.x, p.y);
+
+                if (p.type === 'spark') {
+                    ctx.fillStyle = `rgba(255,254,248,${alpha})`;
+                    ctx.shadowColor = `rgba(255,255,240,${alpha * 0.5})`;
+                    ctx.shadowBlur = r * 1.8;
+                } else {
+                    ctx.fillStyle = hexToRgba(p.color, alpha * 0.8);
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur = 0;
+                }
+
+                ctx.beginPath();
+                ctx.arc(sp.sx, sp.sy, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+            }
+
+            for (const s of scorePopups) {
+                const alpha = s.life / s.maxLife;
+                const sp = isoProject(s.x, s.y);
+                const scale = 1 + (1 - alpha) * 0.3;
+                ctx.save();
+                ctx.translate(sp.sx, sp.sy);
+                ctx.scale(scale, scale);
+                ctx.fillStyle = `rgba(130,120,110,${alpha})`;
+                ctx.font = '600 15px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(s.text, 0, 0);
+                ctx.restore();
+            }
+
+            ctx.restore();
+
+            drawFog();
+            drawUI();
+            if (state === 'gameover') drawGameOver();
+        }
+
+        function drawCloud(cx, cy, scale, alpha) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(scale, scale);
+            ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+            ctx.beginPath();
+            ctx.ellipse(-36, 4, 32, 12, -0.03, 0, Math.PI * 2);
+            ctx.ellipse(-10, -2, 38, 16, 0.04, 0, Math.PI * 2);
+            ctx.ellipse(24, 3, 34, 13, 0.02, 0, Math.PI * 2);
+            ctx.ellipse(53, 7, 24, 9, -0.08, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawHillLayer(baseY, height, color, parallax, alpha) {
+            const period = W * 0.72;
+            const offset = -((cameraX * parallax) % period);
+
+            ctx.fillStyle = color;
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.moveTo(-period + offset, H);
+
+            for (let x = -period; x <= W + period; x += 28) {
+                const worldX = x - offset;
+                const wave = Math.sin(worldX * 0.008) * 0.42 + Math.sin(worldX * 0.015 + 1.6) * 0.22;
+                const y = baseY - height * (0.62 + wave);
+                ctx.lineTo(x + offset, y);
+            }
+
+            ctx.lineTo(W + period, H);
+            ctx.closePath();
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
+        function drawBackground() {
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+            skyGrad.addColorStop(0, '#b8dcea');
+            skyGrad.addColorStop(0.32, '#d9eadc');
+            skyGrad.addColorStop(0.62, '#eadfc3');
+            skyGrad.addColorStop(1, '#c9d2a8');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.fillStyle = 'rgba(255,246,218,0.28)';
+            ctx.fillRect(0, H * 0.36, W, H * 0.18);
+
+            const cloudOffsetA = -((cameraX * 0.045) % (W * 0.9));
+            drawCloud(W * 0.18 + cloudOffsetA, H * 0.14, 1.15, 0.34);
+            drawCloud(W * 0.88 + cloudOffsetA, H * 0.2, 0.92, 0.26);
+            drawCloud(W * 1.28 + cloudOffsetA, H * 0.12, 0.72, 0.2);
+
+            drawHillLayer(H * 0.66, H * 0.18, '#9fb997', 0.08, 0.35);
+            drawHillLayer(H * 0.72, H * 0.2, '#7f9f7c', 0.13, 0.24);
+
+            const groundGrad = ctx.createLinearGradient(0, H * 0.56, 0, H);
+            groundGrad.addColorStop(0, 'rgba(191,204,151,0)');
+            groundGrad.addColorStop(0.24, 'rgba(174,195,139,0.22)');
+            groundGrad.addColorStop(0.62, 'rgba(143,166,120,0.32)');
+            groundGrad.addColorStop(1, 'rgba(116,132,103,0.42)');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, H * 0.5, W, H * 0.5);
+
+            const lineOffset = -((cameraX * 0.18) % 90);
+            ctx.strokeStyle = 'rgba(255,255,255,0.11)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 8; i++) {
+                const y = H * (0.62 + i * 0.047);
+                ctx.beginPath();
+                for (let x = -100; x <= W + 100; x += 28) {
+                    const yy = y + Math.sin((x + lineOffset) * 0.012 + i) * 3.5;
+                    if (x === -100) ctx.moveTo(x, yy);
+                    else ctx.lineTo(x, yy);
+                }
+                ctx.stroke();
+            }
+        }
+
+        function drawFog() {
+            const fogBot = ctx.createLinearGradient(0, H * 0.48, 0, H);
+            fogBot.addColorStop(0, 'rgba(225,238,224,0)');
+            fogBot.addColorStop(0.3, 'rgba(218,232,216,0.04)');
+            fogBot.addColorStop(0.65, 'rgba(210,224,206,0.08)');
+            fogBot.addColorStop(1, 'rgba(188,204,180,0.16)');
+            ctx.fillStyle = fogBot;
+            ctx.fillRect(0, 0, W, H);
+
+            const fogHoriz = ctx.createLinearGradient(0, 0, W, 0);
+            fogHoriz.addColorStop(0, 'rgba(221,236,224,0.13)');
+            fogHoriz.addColorStop(0.18, 'rgba(221,236,224,0.04)');
+            fogHoriz.addColorStop(0.5, 'rgba(221,236,224,0)');
+            fogHoriz.addColorStop(0.82, 'rgba(221,236,224,0.04)');
+            fogHoriz.addColorStop(1, 'rgba(221,236,224,0.13)');
+            ctx.fillStyle = fogHoriz;
+            ctx.fillRect(0, 0, W, H);
+        }
+
+        function drawUI() {
+            const topY = Math.max(28, H * 0.065);
+
+            ctx.fillStyle = 'rgba(255,255,255,0.62)';
+            ctx.font = '700 36px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(score, W / 2 + 1.5, topY + 1.5);
+            ctx.fillStyle = '#43574f';
+            ctx.fillText(score, W / 2, topY);
+
+            ctx.fillStyle = 'rgba(67,87,79,0.52)';
+            ctx.font = '500 12px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(`最高 ${highScore}`, W - 24, topY + 8);
+
+            if (state === 'charging') {
+                const barW = 74;
+                const barH = 3.5;
+                const barX = W / 2 - barW / 2;
+                const barY = Math.min(H * 0.125, 88);
+
+                ctx.fillStyle = 'rgba(78,94,82,0.14)';
+                roundRect(barX, barY, barW, barH, barH / 2);
+                ctx.fill();
+
+                const fillW = barW * chargePower;
+                let barColor;
+                if (chargePower < 0.38) barColor = '#86a67f';
+                else if (chargePower < 0.72) barColor = '#c5a45f';
+                else barColor = '#c47258';
+
+                ctx.fillStyle = barColor;
+                roundRect(barX, barY, fillW, barH, barH / 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                roundRect(barX, barY, fillW, barH * 0.45, barH / 2);
+                ctx.fill();
+            }
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(38,52,42,0.32)';
+            ctx.fillRect(0, 0, W, H);
+
+            const cardW = Math.min(280, W * 0.72);
+            const cardH = 175;
+            const cardX = W / 2 - cardW / 2;
+            const cardY = H / 2 - cardH / 2 - 22;
+
+            ctx.fillStyle = 'rgba(0,0,0,0.06)';
+            roundRect(cardX + 2, cardY + 5, cardW, cardH, 18);
+            ctx.fill();
+
+            const cardGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+            cardGrad.addColorStop(0, 'rgba(250,252,245,0.97)');
+            cardGrad.addColorStop(1, 'rgba(239,244,230,0.97)');
+            ctx.fillStyle = cardGrad;
+            roundRect(cardX, cardY, cardW, cardH, 18);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(119,139,111,0.28)';
+            ctx.lineWidth = 0.7;
+            roundRect(cardX, cardY, cardW, cardH, 18);
+            ctx.stroke();
+
+            ctx.fillStyle = '#64735f';
+            ctx.font = '600 18px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('游戏结束', W / 2, cardY + 36);
+
+            ctx.fillStyle = '#394e45';
+            ctx.font = '600 40px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.fillText(score, W / 2, cardY + 82);
+
+            ctx.fillStyle = '#64735f';
+            ctx.font = '500 13px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.fillText(`最高分 ${highScore}`, W / 2, cardY + 118);
+
+            ctx.fillStyle = '#87927f';
+            ctx.font = '500 13px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.fillText('点击画面重新开始', W / 2, cardY + 150);
+        }
+
+        let lastTime = performance.now();
+
+        function gameLoop(timestamp) {
+            const dtMs = Math.min(timestamp - lastTime, 50);
+            const dtSec = dtMs / 1000;
+            lastTime = timestamp;
+            update(dtSec);
+            render(timestamp);
+            requestAnimationFrame(gameLoop);
+        }
+
+        initGame();
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+
+        console.log('🎮 跳一跳已就绪');
+        console.log('🖱️ 按住屏幕/空格蓄力，松开跳跃');
+    </script>
 </body>
 </html>

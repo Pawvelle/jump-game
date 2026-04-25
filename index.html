@@ -11,7 +11,7 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #cfe5e4;
+            background: #d7ece9;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
@@ -32,17 +32,17 @@
 
         #hint {
             position: absolute;
-            bottom: 14%;
+            bottom: 5%;
             left: 50%;
             transform: translateX(-50%);
-            color: rgba(78, 94, 82, 0.72);
-            font-size: 13px;
+            color: rgba(61, 70, 73, 0.62);
+            font-size: 18px;
             letter-spacing: 0.2px;
             pointer-events: none;
             transition: opacity 0.45s;
             text-align: center;
             font-weight: 500;
-            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
         }
     </style>
 </head>
@@ -63,7 +63,7 @@
             H = canvas.height = window.innerHeight * dpr;
             canvas.style.width = window.innerWidth + 'px';
             canvas.style.height = window.innerHeight + 'px';
-            groundY = H * 0.66;
+            groundY = H * 0.56;
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
@@ -71,41 +71,45 @@
         window.addEventListener('orientationchange', () => setTimeout(resize, 100));
         resize();
 
-        const GRAVITY = 1050;
+        const WORLD_SCALE = dpr;
+        const GRAVITY = 1050 * WORLD_SCALE;
         const CHARGE_MAX_MS = 1500;
-        const POWER_MIN_VX = 155;
-        const POWER_MAX_VX = 340;
-        const POWER_MIN_VY = 170;
-        const POWER_MAX_VY = 470;
+        const POWER_MIN_VX = 230 * WORLD_SCALE;
+        const POWER_MAX_VX = 520 * WORLD_SCALE;
+        const POWER_MIN_VY = 170 * WORLD_SCALE;
+        const POWER_MAX_VY = 470 * WORLD_SCALE;
 
         const ISO_ANGLE = Math.atan(0.5);
         const ISO_COS = Math.cos(ISO_ANGLE);
         const ISO_SIN = Math.sin(ISO_ANGLE);
 
-        const BLOCK_W = 105;
-        const BLOCK_D = 105;
-        const BLOCK_THICK = 72;
-        const BLOCK_MIN_GAP = 65;
-        const BLOCK_MAX_GAP = 155;
-        const BLOCK_Y_VARY = 22;
+        const BLOCK_W = 145 * WORLD_SCALE;
+        const BLOCK_D = 145 * WORLD_SCALE;
+        const BLOCK_THICK = 70 * WORLD_SCALE;
+        const BLOCK_MIN_GAP = 220 * WORLD_SCALE;
+        const BLOCK_MAX_GAP = 330 * WORLD_SCALE;
+        const BLOCK_Y_VARY = 10 * WORLD_SCALE;
 
-        const PLAYER_W = 19;
-        const PLAYER_H = 30;
-        const PLAYER_COLOR = '#3f4b4a';
-        const PLAYER_DARK = '#25302f';
-        const PLAYER_LIGHT = '#60746d';
-        const PLAYER_HEAD_HIGHLIGHT = '#c1d5cb';
-        const PLAYER_MID = '#4c5f59';
+        const VIEW_X_SCALE = 0.66;
+        const VIEW_Y_SKEW = -0.42;
+        const BLOCK_AXIS_X = 0.42;
+        const BLOCK_AXIS_Y = 0.20;
+        const DEPTH_X_SCALE = 0.74;
+        const DEPTH_Y_SCALE = -0.64;
+
+        const PLAYER_W = 22 * WORLD_SCALE;
+        const PLAYER_H = 48 * WORLD_SCALE;
+        const PLAYER_COLOR = '#34384c';
+        const PLAYER_DARK = '#202639';
+        const PLAYER_LIGHT = '#59617a';
+        const PLAYER_HEAD_HIGHLIGHT = '#b9c7d8';
+        const PLAYER_MID = '#3e465e';
 
         const BLOCK_PALETTES = [
-            { top: '#a9c083', left: '#829460', front: '#6f7c58', right: '#596848', edge: '#d7e5bd', speck: '#65754c' },
-            { top: '#b7c9a4', left: '#8ea079', front: '#768768', right: '#60725a', edge: '#e0ead1', speck: '#70805f' },
-            { top: '#c6b79b', left: '#9d8d73', front: '#817158', right: '#685b48', edge: '#eadfc4', speck: '#74634b' },
-            { top: '#aeb8ad', left: '#879286', front: '#6f7b70', right: '#59645c', edge: '#d9ded6', speck: '#657063' },
-            { top: '#c8aa84', left: '#a37e5d', front: '#856449', right: '#6b503c', edge: '#ecd0a7', speck: '#7d5d42' },
-            { top: '#9fb99a', left: '#789272', front: '#637a60', right: '#50644f', edge: '#d2e2cd', speck: '#5f7559' },
-            { top: '#c0c3a2', left: '#949873', front: '#7b7e61', right: '#62664f', edge: '#e6e7c9', speck: '#737758' },
-            { top: '#b5aa99', left: '#8e8374', front: '#766b5f', right: '#5f554c', edge: '#ded5c8', speck: '#6c6257' },
+            { kind: 'grass', top: '#5fa75d', side: '#ecf2ed', sideLeft: '#d7ded8', sideRight: '#bcc7bf', underside: '#8b9a8d', edge: '#4a874b', stripe: '#c1ccc3', speck: '#4e8c50' },
+            { kind: 'stone', top: '#595a60', side: '#7f8385', sideLeft: '#686d6f', sideRight: '#4e5355', underside: '#3d4143', edge: '#42454a', stripe: '#c9cfca', speck: '#70737a' },
+            { kind: 'stone', top: '#515257', side: '#878b8d', sideLeft: '#707477', sideRight: '#52575a', underside: '#3a3d40', edge: '#414349', stripe: '#c5cbc6', speck: '#696d72' },
+            { kind: 'grass', top: '#6aaa68', side: '#eef3ef', sideLeft: '#d9e1db', sideRight: '#bfcbc2', underside: '#89988b', edge: '#4f8950', stripe: '#c4cfc5', speck: '#568e55' },
         ];
 
         let state = 'ready';
@@ -138,17 +142,22 @@
         let floatPhases = [];
         let shadowTrails = [];
         let blocks = [];
+        let blockSerial = 0;
 
         function createBlock(prevBlock, forceGap) {
             const gap = forceGap ?? (BLOCK_MIN_GAP + Math.random() * (BLOCK_MAX_GAP - BLOCK_MIN_GAP));
             const x = prevBlock ? prevBlock.x + BLOCK_W + gap : W * 0.18;
             const baseY = prevBlock ? prevBlock.y : 0;
             const y = baseY + (Math.random() - 0.5) * BLOCK_Y_VARY * 0.55;
-            const palette = BLOCK_PALETTES[Math.floor(Math.random() * BLOCK_PALETTES.length)];
+            const serial = blockSerial++;
+            const palette = serial === 0
+                ? BLOCK_PALETTES[0]
+                : (serial % 4 === 0 ? BLOCK_PALETTES[3] : BLOCK_PALETTES[1 + Math.floor(Math.random() * 2)]);
             floatPhases.push(Math.random() * Math.PI * 2);
             return {
                 x,
                 y,
+                serial,
                 color: palette.top,
                 palette,
                 detailSeed: Math.random() * 10000,
@@ -157,11 +166,12 @@
         }
 
         function ensureBlocksAhead() {
-            while (blocks.length === 0 || blocks[blocks.length - 1].x < cameraX + W * 1.6) {
+            const targetCount = currentBlockIdx + 2;
+            while (blocks.length < targetCount) {
                 const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
                 blocks.push(createBlock(prev));
             }
-            while (blocks.length > 3 && blocks[0].x + BLOCK_W < cameraX - W * 0.6) {
+            while (blocks.length > 3 && blocks[0].x + BLOCK_W < cameraX - W * 0.55) {
                 blocks.shift();
                 floatPhases.shift();
                 currentBlockIdx = Math.max(0, currentBlockIdx - 1);
@@ -223,6 +233,7 @@
             comboCount = 0;
             currentBlockIdx = 0;
             cameraSettleTimer = 0;
+            blockSerial = 0;
 
             const b1 = createBlock(null);
             blocks.push(b1);
@@ -511,14 +522,14 @@
         function isoProject(x, y) {
             const relX = x - cameraX;
             return {
-                sx: W / 2 + relX * ISO_COS,
-                sy: groundY + relX * ISO_SIN + y
+                sx: W / 2 + relX * VIEW_X_SCALE,
+                sy: groundY + relX * VIEW_Y_SKEW + y
             };
         }
 
         function getBlockFloat(idx, time) {
             if (idx >= floatPhases.length) return 0;
-            return Math.sin(time * 0.0007 + floatPhases[idx]) * 3.8;
+            return Math.sin(time * 0.0007 + floatPhases[idx]) * 3.8 * WORLD_SCALE;
         }
 
         function darkenColor(hex, amount) {
@@ -540,6 +551,10 @@
             const g = parseInt(hex.slice(3, 5), 16);
             const b = parseInt(hex.slice(5, 7), 16);
             return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+        }
+
+        function uiPx(px) {
+            return Math.round(px * dpr);
         }
 
         function hash01(seed) {
@@ -587,34 +602,40 @@
                 if (bb.idx === idx) {
                     const t = bb.elapsed / bb.duration;
                     const env = Math.sin(t * Math.PI) * Math.exp(-t * 5);
-                    bounceDY = env * -12;
+                    bounceDY = env * -12 * WORLD_SCALE;
                     bounceSquish = env * 0.10;
                     break;
                 }
             }
 
-            const center = isoProject(block.x + BLOCK_W / 2, block.y + floatY + bounceDY);
+            const projectedCenter = isoProject(block.x + BLOCK_W / 2, block.y + floatY + bounceDY);
             const h = BLOCK_THICK * (1 - bounceSquish);
+            const depthX = BLOCK_D * DEPTH_X_SCALE;
+            const depthY = BLOCK_D * DEPTH_Y_SCALE;
 
             const xAxis = {
-                x: BLOCK_W * 0.5 * ISO_COS,
-                y: BLOCK_W * 0.5 * ISO_SIN,
+                x: BLOCK_W * BLOCK_AXIS_X,
+                y: BLOCK_W * BLOCK_AXIS_Y,
             };
 
             const zAxis = {
-                x: -BLOCK_D * 0.5 * ISO_SIN,
-                y: BLOCK_D * 0.5 * ISO_COS,
+                x: depthX * 0.5,
+                y: depthY * 0.5,
             };
 
-            const R = { x: center.sx + xAxis.x, y: center.sy + xAxis.y };
-            const F = { x: center.sx + zAxis.x, y: center.sy + zAxis.y };
-            const L = { x: center.sx - xAxis.x, y: center.sy - xAxis.y };
-            const B = { x: center.sx - zAxis.x, y: center.sy - zAxis.y };
+            const L = { x: projectedCenter.sx - xAxis.x - zAxis.x, y: projectedCenter.sy - xAxis.y - zAxis.y };
+            const F = { x: projectedCenter.sx + xAxis.x - zAxis.x, y: projectedCenter.sy + xAxis.y - zAxis.y };
+            const R = { x: projectedCenter.sx + xAxis.x + zAxis.x, y: projectedCenter.sy + xAxis.y + zAxis.y };
+            const B = { x: projectedCenter.sx - xAxis.x + zAxis.x, y: projectedCenter.sy - xAxis.y + zAxis.y };
 
             const Rb = { x: R.x, y: R.y + h };
             const Fb = { x: F.x, y: F.y + h };
             const Lb = { x: L.x, y: L.y + h };
             const Bb = { x: B.x, y: B.y + h };
+            const center = {
+                sx: (L.x + F.x + R.x + B.x) / 4,
+                sy: (L.y + F.y + R.y + B.y) / 4,
+            };
 
             return { R, F, L, B, Rb, Fb, Lb, Bb, center, h, xAxis, zAxis };
         }
@@ -622,20 +643,20 @@
         function drawBlockShadow(block, idx, timestamp) {
             const g = getBlockGeometry(block, idx, timestamp);
             const cx = (g.Fb.x + g.Rb.x + g.Bb.x + g.Lb.x) / 4;
-            const cy = Math.max(g.Fb.y, g.Rb.y, g.Bb.y, g.Lb.y) + 12;
+            const cy = Math.max(g.Fb.y, g.Rb.y, g.Bb.y, g.Lb.y) + 8;
 
             ctx.save();
-            ctx.translate(cx + 14, cy + 9);
+            ctx.translate(cx - 8, cy + 9);
             ctx.rotate(ISO_ANGLE);
 
-            ctx.fillStyle = 'rgba(0,0,0,0.028)';
+            ctx.fillStyle = 'rgba(46,58,54,0.045)';
             ctx.beginPath();
-            ctx.ellipse(0, 0, BLOCK_W * 0.78, BLOCK_W * 0.28, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, BLOCK_W * 0.72, BLOCK_W * 0.24, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.fillStyle = 'rgba(0,0,0,0.055)';
+            ctx.fillStyle = 'rgba(46,58,54,0.06)';
             ctx.beginPath();
-            ctx.ellipse(0, 0, BLOCK_W * 0.55, BLOCK_W * 0.19, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, BLOCK_W * 0.48, BLOCK_W * 0.16, 0, 0, Math.PI * 2);
             ctx.fill();
 
             ctx.restore();
@@ -725,53 +746,85 @@
 
             const palette = block.palette || {};
             const topC = palette.top || block.color;
-            const faceLeftC = palette.left || darkenColor(block.color, 0.16);
-            const faceFrontC = palette.front || darkenColor(block.color, 0.27);
-            const faceRightC = palette.right || darkenColor(block.color, 0.38);
+            const leftC = palette.sideLeft || darkenColor(block.color, 0.18);
+            const rightC = palette.sideRight || darkenColor(block.color, 0.32);
+            const edgeC = palette.edge || darkenColor(block.color, 0.35);
+            const stripeC = palette.stripe || lightenColor(block.color, 0.24);
 
-            const leftGrad = ctx.createLinearGradient(g.L.x, g.L.y, g.F.x, g.F.y);
-            leftGrad.addColorStop(0, lightenColor(palette.left || block.color, 0.04));
-            leftGrad.addColorStop(1, faceFrontC);
-            drawPolygon([g.L, g.F, g.Fb, g.Lb], leftGrad, 'rgba(28,42,34,0.055)', 0.55);
+            drawPolygon([g.L, g.F, g.Fb, g.Lb], leftC);
+            drawPolygon([g.F, g.R, g.Rb, g.Fb], rightC);
 
-            const rightGrad = ctx.createLinearGradient(g.F.x, g.F.y, g.R.x, g.R.y);
-            rightGrad.addColorStop(0, faceLeftC);
-            rightGrad.addColorStop(1, faceRightC);
-            drawPolygon([g.F, g.R, g.Rb, g.Fb], rightGrad, 'rgba(28,42,34,0.075)', 0.55);
+            if (palette.kind === 'grass') {
+                const inset = 0.78;
+                const lowerL = { x: g.L.x, y: g.L.y + g.h * inset };
+                const lowerF = { x: g.F.x, y: g.F.y + g.h * inset };
+                const lowerR = { x: g.R.x, y: g.R.y + g.h * inset };
+                drawPolygon([lowerL, lowerF, g.Fb, g.Lb], palette.underside || '#8b9a8d');
+                drawPolygon([lowerF, lowerR, g.Rb, g.Fb], darkenColor(palette.underside || '#8b9a8d', 0.14));
+            }
 
-            const backGrad = ctx.createLinearGradient(g.B.x, g.B.y, g.R.x, g.R.y);
-            backGrad.addColorStop(0, darkenColor(palette.front || block.color, 0.08));
-            backGrad.addColorStop(1, darkenColor(palette.right || block.color, 0.12));
-            drawPolygon([g.B, g.R, g.Rb, g.Bb], backGrad, 'rgba(28,42,34,0.045)', 0.45);
+            drawPolygon([g.R, g.F, g.L, g.B], topC);
 
-            drawPolygon([g.R, g.F, g.L, g.B], topC, 'rgba(0,0,0,0.055)', 0.6);
-
-            const highlight = ctx.createLinearGradient(g.L.x, g.L.y, g.R.x, g.R.y);
-            highlight.addColorStop(0, 'rgba(255,255,255,0.28)');
-            highlight.addColorStop(0.5, 'rgba(255,255,255,0.08)');
-            highlight.addColorStop(1, 'rgba(255,255,255,0)');
-            drawPolygon([g.R, g.F, g.L, g.B], highlight);
-            drawBlockTopTexture(g, block, idx);
-            drawGrassRim(g, block);
-
-            ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-            ctx.lineWidth = 0.45;
+            ctx.strokeStyle = palette.kind === 'grass' ? 'rgba(69,118,70,0.36)' : 'rgba(32,34,38,0.34)';
+            ctx.lineWidth = 1.15;
             ctx.beginPath();
             ctx.moveTo(g.L.x, g.L.y);
             ctx.lineTo(g.F.x, g.F.y);
+            ctx.lineTo(g.R.x, g.R.y);
             ctx.stroke();
 
-            ctx.strokeStyle = 'rgba(0,0,0,0.075)';
-            ctx.lineWidth = 0.55;
+            if (palette.kind === 'stone') {
+                ctx.strokeStyle = stripeC;
+                ctx.lineWidth = 3.2;
+                for (const t of [0.34, 0.62]) {
+                    ctx.beginPath();
+                    ctx.moveTo(g.L.x, g.L.y + g.h * t);
+                    ctx.lineTo(g.F.x, g.F.y + g.h * t);
+                    ctx.lineTo(g.R.x, g.R.y + g.h * t);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = 'rgba(43,46,49,0.46)';
+                    ctx.lineWidth = 2.2;
+                    ctx.beginPath();
+                    ctx.moveTo(g.L.x, g.L.y + g.h * t + 4);
+                    ctx.lineTo(g.F.x, g.F.y + g.h * t + 4);
+                    ctx.lineTo(g.R.x, g.R.y + g.h * t + 4);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = stripeC;
+                    ctx.lineWidth = 3.2;
+                }
+            } else {
+                ctx.strokeStyle = stripeC;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(g.L.x, g.L.y + g.h * 0.74);
+                ctx.lineTo(g.F.x, g.F.y + g.h * 0.74);
+                ctx.lineTo(g.R.x, g.R.y + g.h * 0.74);
+                ctx.stroke();
+            }
+
+            ctx.strokeStyle = 'rgba(28,36,34,0.18)';
+            ctx.lineWidth = 0.8;
             ctx.beginPath();
+            ctx.moveTo(g.L.x, g.L.y);
+            ctx.lineTo(g.F.x, g.F.y);
+            ctx.lineTo(g.R.x, g.R.y);
             ctx.moveTo(g.F.x, g.F.y);
             ctx.lineTo(g.Fb.x, g.Fb.y);
-            ctx.moveTo(g.R.x, g.R.y);
-            ctx.lineTo(g.Rb.x, g.Rb.y);
             ctx.stroke();
 
+            ctx.strokeStyle = edgeC;
+            ctx.globalAlpha = 0.28;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(g.B.x, g.B.y);
+            ctx.lineTo(g.R.x, g.R.y);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+
             if (idx === currentBlockIdx + 1 && state === 'charging') {
-                const pulse = Math.sin(timeMs * 0.011) * 0.08 + 0.10;
+                const pulse = Math.sin(timeMs * 0.011) * 0.06 + 0.08;
                 drawPolygon([g.R, g.F, g.L, g.B], `rgba(255,255,255,${pulse})`);
             }
         }
@@ -779,6 +832,7 @@
         function drawPlayerShadow() {
             const feetY = player.y + PLAYER_H + player.floatOffset;
             const base = isoProject(player.x, feetY);
+            base.sy -= BLOCK_D * 0.13;
             let heightFactor = 1;
 
             if (state === 'jumping') {
@@ -805,6 +859,7 @@
         function drawPlayer() {
             const feetY = player.y + PLAYER_H + player.floatOffset;
             const base = isoProject(player.x, feetY);
+            base.sy -= BLOCK_D * 0.13;
             let bodyH = PLAYER_H;
             let bodyW = PLAYER_W;
 
@@ -833,13 +888,13 @@
             if (Math.abs(player.tilt) > 0.0008) ctx.rotate(player.tilt);
 
             if (state === 'charging' && chargePower > 0.05) {
-                const glowAlpha = chargePower * 0.18;
-                const grad = ctx.createRadialGradient(0, bodyH * 0.3, bodyW * 0.35, 0, bodyH * 0.3, bodyW * 1.5);
-                grad.addColorStop(0, `rgba(190,218,198,${glowAlpha})`);
-                grad.addColorStop(1, 'rgba(190,218,198,0)');
+                const glowAlpha = chargePower * 0.12;
+                const grad = ctx.createRadialGradient(0, bodyH * 0.22, bodyW * 0.3, 0, bodyH * 0.22, bodyW * 1.55);
+                grad.addColorStop(0, `rgba(62,74,102,${glowAlpha})`);
+                grad.addColorStop(1, 'rgba(62,74,102,0)');
                 ctx.fillStyle = grad;
                 ctx.beginPath();
-                ctx.arc(0, bodyH * 0.3, bodyW * 1.5, 0, Math.PI * 2);
+                ctx.arc(0, bodyH * 0.22, bodyW * 1.55, 0, Math.PI * 2);
                 ctx.fill();
             }
 
@@ -848,42 +903,41 @@
             const topY = -halfH;
             const botY = halfH;
 
-            const baseW = halfW * 1.22;
-            const baseH = bodyH * 0.14;
-            const baseTopY = botY - baseH;
-
-            const baseGrad = ctx.createLinearGradient(-baseW, 0, baseW, 0);
-            baseGrad.addColorStop(0, PLAYER_DARK);
-            baseGrad.addColorStop(0.25, PLAYER_MID);
-            baseGrad.addColorStop(0.5, PLAYER_LIGHT);
-            baseGrad.addColorStop(0.75, PLAYER_MID);
-            baseGrad.addColorStop(1, PLAYER_DARK);
-            ctx.fillStyle = baseGrad;
-            roundRect(-baseW, baseTopY, baseW * 2, baseH, baseW * 0.35);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
-
             const bodyGrad = ctx.createLinearGradient(-halfW, 0, halfW, 0);
             bodyGrad.addColorStop(0, PLAYER_DARK);
-            bodyGrad.addColorStop(0.2, PLAYER_COLOR);
-            bodyGrad.addColorStop(0.48, PLAYER_LIGHT);
-            bodyGrad.addColorStop(0.75, PLAYER_COLOR);
+            bodyGrad.addColorStop(0.42, PLAYER_COLOR);
+            bodyGrad.addColorStop(0.68, PLAYER_LIGHT);
             bodyGrad.addColorStop(1, PLAYER_DARK);
+
+            const baseW = halfW * 1.34;
+            const baseH = Math.max(4, bodyH * 0.13);
             ctx.fillStyle = bodyGrad;
-            roundRect(-halfW, topY, bodyW, baseTopY - topY, bodyW * 0.42);
+            ctx.beginPath();
+            ctx.ellipse(0, botY - baseH * 0.45, baseW, baseH, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-            ctx.lineWidth = 0.55;
+            ctx.fillStyle = bodyGrad;
             ctx.beginPath();
-            ctx.moveTo(-halfW + 2.5, topY + bodyW * 0.42);
-            ctx.lineTo(-halfW + 2.5, baseTopY - bodyW * 0.42);
+            ctx.moveTo(-halfW * 0.34, topY + bodyH * 0.26);
+            ctx.lineTo(halfW * 0.34, topY + bodyH * 0.26);
+            ctx.lineTo(halfW * 0.98, botY - baseH * 0.55);
+            ctx.quadraticCurveTo(0, botY + baseH * 0.12, -halfW * 0.98, botY - baseH * 0.55);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#2a3045';
+            roundRect(-halfW * 0.25, topY + bodyH * 0.12, halfW * 0.5, bodyH * 0.18, halfW * 0.18);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+            ctx.lineWidth = 0.65;
+            ctx.beginPath();
+            ctx.moveTo(-halfW * 0.42, topY + bodyH * 0.35);
+            ctx.lineTo(-halfW * 0.55, botY - baseH * 0.8);
             ctx.stroke();
 
-            const headR = bodyW * 0.56;
-            const headY = topY - headR * 0.22;
+            const headR = bodyW * 0.47;
+            const headY = topY + bodyH * 0.02;
             const headGrad = ctx.createRadialGradient(-headR * 0.38, headY - headR * 0.38, headR * 0.06, 0, headY, headR);
             headGrad.addColorStop(0, PLAYER_HEAD_HIGHLIGHT);
             headGrad.addColorStop(0.25, PLAYER_LIGHT);
@@ -897,12 +951,12 @@
 
             ctx.fillStyle = 'rgba(255,255,255,0.14)';
             ctx.beginPath();
-            ctx.arc(-headR * 0.32, headY - headR * 0.37, headR * 0.24, 0, Math.PI * 2);
+            ctx.arc(-headR * 0.32, headY - headR * 0.35, headR * 0.22, 0, Math.PI * 2);
             ctx.fill();
 
             ctx.fillStyle = 'rgba(255,255,255,0.22)';
             ctx.beginPath();
-            ctx.arc(-headR * 0.34, headY - headR * 0.4, headR * 0.1, 0, Math.PI * 2);
+            ctx.arc(-headR * 0.35, headY - headR * 0.42, headR * 0.08, 0, Math.PI * 2);
             ctx.fill();
 
             ctx.restore();
@@ -922,7 +976,9 @@
             ctx.save();
             ctx.translate(shakeX, shakeY);
 
-            for (let i = 0; i < blocks.length; i++) {
+            const firstVisibleBlock = currentBlockIdx;
+            const lastVisibleBlock = Math.min(blocks.length, currentBlockIdx + 2);
+            for (let i = firstVisibleBlock; i < lastVisibleBlock; i++) {
                 drawBlock(blocks[i], i, timestamp);
             }
 
@@ -968,7 +1024,7 @@
                 ctx.translate(sp.sx, sp.sy);
                 ctx.scale(scale, scale);
                 ctx.fillStyle = `rgba(130,120,110,${alpha})`;
-                ctx.font = '600 15px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+                ctx.font = `600 ${uiPx(22)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(s.text, 0, 0);
@@ -1020,81 +1076,42 @@
 
         function drawBackground() {
             const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-            skyGrad.addColorStop(0, '#b8dcea');
-            skyGrad.addColorStop(0.32, '#d9eadc');
-            skyGrad.addColorStop(0.62, '#eadfc3');
-            skyGrad.addColorStop(1, '#c9d2a8');
+            skyGrad.addColorStop(0, '#d6eeee');
+            skyGrad.addColorStop(0.46, '#d8eee8');
+            skyGrad.addColorStop(1, '#cfe7da');
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, W, H);
 
-            ctx.fillStyle = 'rgba(255,246,218,0.28)';
-            ctx.fillRect(0, H * 0.36, W, H * 0.18);
+            const ambient = ctx.createRadialGradient(W * 0.5, H * 0.54, H * 0.05, W * 0.5, H * 0.54, H * 0.62);
+            ambient.addColorStop(0, 'rgba(255,255,255,0.18)');
+            ambient.addColorStop(1, 'rgba(170,202,183,0)');
+            ctx.fillStyle = ambient;
+            ctx.fillRect(0, 0, W, H);
 
-            const cloudOffsetA = -((cameraX * 0.045) % (W * 0.9));
-            drawCloud(W * 0.18 + cloudOffsetA, H * 0.14, 1.15, 0.34);
-            drawCloud(W * 0.88 + cloudOffsetA, H * 0.2, 0.92, 0.26);
-            drawCloud(W * 1.28 + cloudOffsetA, H * 0.12, 0.72, 0.2);
-
-            drawHillLayer(H * 0.66, H * 0.18, '#9fb997', 0.08, 0.35);
-            drawHillLayer(H * 0.72, H * 0.2, '#7f9f7c', 0.13, 0.24);
-
-            const groundGrad = ctx.createLinearGradient(0, H * 0.56, 0, H);
-            groundGrad.addColorStop(0, 'rgba(191,204,151,0)');
-            groundGrad.addColorStop(0.24, 'rgba(174,195,139,0.22)');
-            groundGrad.addColorStop(0.62, 'rgba(143,166,120,0.32)');
-            groundGrad.addColorStop(1, 'rgba(116,132,103,0.42)');
-            ctx.fillStyle = groundGrad;
-            ctx.fillRect(0, H * 0.5, W, H * 0.5);
-
-            const lineOffset = -((cameraX * 0.18) % 90);
-            ctx.strokeStyle = 'rgba(255,255,255,0.11)';
-            ctx.lineWidth = 1;
-            for (let i = 0; i < 8; i++) {
-                const y = H * (0.62 + i * 0.047);
-                ctx.beginPath();
-                for (let x = -100; x <= W + 100; x += 28) {
-                    const yy = y + Math.sin((x + lineOffset) * 0.012 + i) * 3.5;
-                    if (x === -100) ctx.moveTo(x, yy);
-                    else ctx.lineTo(x, yy);
-                }
-                ctx.stroke();
-            }
+            ctx.fillStyle = 'rgba(129,158,145,0.05)';
+            ctx.fillRect(0, H * 0.72, W, H * 0.28);
         }
 
         function drawFog() {
-            const fogBot = ctx.createLinearGradient(0, H * 0.48, 0, H);
-            fogBot.addColorStop(0, 'rgba(225,238,224,0)');
-            fogBot.addColorStop(0.3, 'rgba(218,232,216,0.04)');
-            fogBot.addColorStop(0.65, 'rgba(210,224,206,0.08)');
-            fogBot.addColorStop(1, 'rgba(188,204,180,0.16)');
-            ctx.fillStyle = fogBot;
-            ctx.fillRect(0, 0, W, H);
-
-            const fogHoriz = ctx.createLinearGradient(0, 0, W, 0);
-            fogHoriz.addColorStop(0, 'rgba(221,236,224,0.13)');
-            fogHoriz.addColorStop(0.18, 'rgba(221,236,224,0.04)');
-            fogHoriz.addColorStop(0.5, 'rgba(221,236,224,0)');
-            fogHoriz.addColorStop(0.82, 'rgba(221,236,224,0.04)');
-            fogHoriz.addColorStop(1, 'rgba(221,236,224,0.13)');
-            ctx.fillStyle = fogHoriz;
+            ctx.fillStyle = 'rgba(255,255,255,0.04)';
             ctx.fillRect(0, 0, W, H);
         }
 
         function drawUI() {
             const topY = Math.max(28, H * 0.065);
 
-            ctx.fillStyle = 'rgba(255,255,255,0.62)';
-            ctx.font = '700 36px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.fillStyle = 'rgba(255,255,255,0.48)';
+            ctx.font = `700 ${uiPx(46)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(score, W / 2 + 1.5, topY + 1.5);
-            ctx.fillStyle = '#43574f';
+            ctx.fillText(score, W / 2 + uiPx(1.5), topY + uiPx(1.5));
+            ctx.fillStyle = '#3e4848';
             ctx.fillText(score, W / 2, topY);
 
-            ctx.fillStyle = 'rgba(67,87,79,0.52)';
-            ctx.font = '500 12px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.fillStyle = 'rgba(62,72,72,0.48)';
+            ctx.font = `600 ${uiPx(16)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.textAlign = 'right';
-            ctx.fillText(`最高 ${highScore}`, W - 24, topY + 8);
+            ctx.fillText(`最高 ${highScore}`, W - uiPx(24), topY + uiPx(10));
 
             if (state === 'charging') {
                 const barW = 74;
@@ -1102,15 +1119,15 @@
                 const barX = W / 2 - barW / 2;
                 const barY = Math.min(H * 0.125, 88);
 
-                ctx.fillStyle = 'rgba(78,94,82,0.14)';
+                ctx.fillStyle = 'rgba(62,72,72,0.12)';
                 roundRect(barX, barY, barW, barH, barH / 2);
                 ctx.fill();
 
                 const fillW = barW * chargePower;
                 let barColor;
-                if (chargePower < 0.38) barColor = '#86a67f';
-                else if (chargePower < 0.72) barColor = '#c5a45f';
-                else barColor = '#c47258';
+                if (chargePower < 0.38) barColor = '#5fa75d';
+                else if (chargePower < 0.72) barColor = '#6f7f94';
+                else barColor = '#3d414f';
 
                 ctx.fillStyle = barColor;
                 roundRect(barX, barY, fillW, barH, barH / 2);
@@ -1148,21 +1165,21 @@
             ctx.stroke();
 
             ctx.fillStyle = '#64735f';
-            ctx.font = '600 18px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.font = `600 ${uiPx(22)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('游戏结束', W / 2, cardY + 36);
 
             ctx.fillStyle = '#394e45';
-            ctx.font = '600 40px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.font = `600 ${uiPx(56)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.fillText(score, W / 2, cardY + 82);
 
             ctx.fillStyle = '#64735f';
-            ctx.font = '500 13px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.font = `500 ${uiPx(17)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.fillText(`最高分 ${highScore}`, W / 2, cardY + 118);
 
             ctx.fillStyle = '#87927f';
-            ctx.font = '500 13px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+            ctx.font = `500 ${uiPx(17)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.fillText('点击画面重新开始', W / 2, cardY + 150);
         }
 

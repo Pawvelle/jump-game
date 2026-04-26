@@ -78,6 +78,10 @@
         const POWER_MAX_VX = 520 * WORLD_SCALE;
         const POWER_MIN_VY = 170 * WORLD_SCALE;
         const POWER_MAX_VY = 470 * WORLD_SCALE;
+        const LONG_JUMP_FLIP_DISTANCE = 300 * WORLD_SCALE;
+        const AIR_WAKE_INTERVAL_MS = 65;
+        const FLIP_START_PORTION = 0.10;
+        const FLIP_DURATION_PORTION = 0.62;
 
         const ISO_ANGLE = Math.atan(0.5);
         const ISO_COS = Math.cos(ISO_ANGLE);
@@ -110,6 +114,12 @@
             { kind: 'stone', top: '#595a60', side: '#7f8385', sideLeft: '#686d6f', sideRight: '#4e5355', underside: '#3d4143', edge: '#42454a', stripe: '#c9cfca', speck: '#70737a' },
             { kind: 'stone', top: '#515257', side: '#878b8d', sideLeft: '#707477', sideRight: '#52575a', underside: '#3a3d40', edge: '#414349', stripe: '#c5cbc6', speck: '#696d72' },
             { kind: 'grass', top: '#6aaa68', side: '#eef3ef', sideLeft: '#d9e1db', sideRight: '#bfcbc2', underside: '#89988b', edge: '#4f8950', stripe: '#c4cfc5', speck: '#568e55' },
+            { kind: 'wood', top: '#a97952', side: '#b9946f', sideLeft: '#a77f5c', sideRight: '#765941', underside: '#6b4f39', edge: '#6f4d32', stripe: '#d7b48a', speck: '#7c5739' },
+            { kind: 'ice', top: '#a9dce2', side: '#d8f1f1', sideLeft: '#b8dadd', sideRight: '#8dbbc0', underside: '#6f9fa5', edge: '#70b7c0', stripe: '#f8ffff', speck: '#6fb9c4' },
+            { kind: 'clay', top: '#c8765e', side: '#d9ad96', sideLeft: '#bd826f', sideRight: '#8c5e51', underside: '#7b4f44', edge: '#9f5a49', stripe: '#ecd0bd', speck: '#9d5a48' },
+            { kind: 'metal', top: '#c5bd9c', side: '#d5d2c0', sideLeft: '#b3af9d', sideRight: '#7e7d75', underside: '#65645e', edge: '#8d876f', stripe: '#f1e8c5', speck: '#8a846d' },
+            { kind: 'target', top: '#f1eee3', side: '#e8e5dc', sideLeft: '#d0cec5', sideRight: '#a7a69d', underside: '#85847c', edge: '#d25a58', stripe: '#5f8f69', speck: '#c95c5b' },
+            { kind: 'granite', top: '#777a84', side: '#a1a4a6', sideLeft: '#83888d', sideRight: '#646970', underside: '#494d53', edge: '#565b62', stripe: '#d2d5d0', speck: '#e4e2db' },
         ];
 
         let state = 'ready';
@@ -125,6 +135,16 @@
             floatOffset: 0,
             tilt: 0,
             tiltVel: 0,
+            flipActive: false,
+            flipAngle: 0,
+            flipStart: 0,
+            flipDuration: 0,
+            flipDirection: 1,
+            jumpStartTime: 0,
+            jumpDuration: 0,
+            jumpDistance: 0,
+            launchPower: 0,
+            lastAirWake: 0,
             squashScale: 1,
             stretchScale: 1,
         };
@@ -152,7 +172,7 @@
             const serial = blockSerial++;
             const palette = serial === 0
                 ? BLOCK_PALETTES[0]
-                : (serial % 4 === 0 ? BLOCK_PALETTES[3] : BLOCK_PALETTES[1 + Math.floor(Math.random() * 2)]);
+                : BLOCK_PALETTES[1 + Math.floor(Math.random() * (BLOCK_PALETTES.length - 1))];
             floatPhases.push(Math.random() * Math.PI * 2);
             return {
                 x,
@@ -213,6 +233,39 @@
             }
         }
 
+        function spawnTakeoffParticles(x, y, color, power) {
+            const count = 8 + Math.round(power * 12);
+            for (let i = 0; i < count; i++) {
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.25;
+                const speed = 45 + Math.random() * (105 + power * 95);
+                particles.push({
+                    x: x + (Math.random() - 0.5) * PLAYER_W * 1.4,
+                    y,
+                    vx: Math.cos(angle) * speed - power * 35,
+                    vy: Math.sin(angle) * speed - power * 45,
+                    life: 0.18 + Math.random() * 0.28,
+                    maxLife: 0.18 + Math.random() * 0.28,
+                    radius: 1.2 + Math.random() * 2.4 + power * 1.4,
+                    color,
+                    type: 'debris',
+                });
+            }
+        }
+
+        function spawnAirWake(x, y, power) {
+            particles.push({
+                x: x - PLAYER_W * (0.35 + Math.random() * 0.6),
+                y: y + (Math.random() - 0.5) * PLAYER_H * 0.34,
+                vx: -70 * WORLD_SCALE - power * 80 * WORLD_SCALE,
+                vy: (Math.random() - 0.5) * 30 * WORLD_SCALE,
+                life: 0.18 + power * 0.12,
+                maxLife: 0.18 + power * 0.12,
+                radius: PLAYER_W * (0.18 + power * 0.12),
+                color: '#ffffff',
+                type: 'wake',
+            });
+        }
+
         function spawnScorePopup(x, y, text) {
             scorePopups.push({ x, y, life: 0.85, maxLife: 0.85, text: text || '+1' });
         }
@@ -245,6 +298,16 @@
             player.floatOffset = 0;
             player.tilt = 0;
             player.tiltVel = 0;
+            player.flipActive = false;
+            player.flipAngle = 0;
+            player.flipStart = 0;
+            player.flipDuration = 0;
+            player.flipDirection = 1;
+            player.jumpStartTime = 0;
+            player.jumpDuration = 0;
+            player.jumpDistance = 0;
+            player.launchPower = 0;
+            player.lastAirWake = 0;
             player.squashScale = 1;
             player.stretchScale = 1;
 
@@ -267,6 +330,7 @@
             chargePower = 0;
             player.squashScale = 1;
             player.stretchScale = 1;
+            triggerHaptic(5);
         }
 
         function releaseCharge() {
@@ -276,12 +340,33 @@
             const clamped = Math.max(40, Math.min(elapsed, CHARGE_MAX_MS));
             chargePower = clamped / CHARGE_MAX_MS;
 
+            const now = performance.now();
             player.vx = POWER_MIN_VX + chargePower * (POWER_MAX_VX - POWER_MIN_VX);
             player.vy = -(POWER_MIN_VY + chargePower * (POWER_MAX_VY - POWER_MIN_VY));
-            player.tiltVel = (player.vx / POWER_MAX_VX) * 5.8;
+            player.tiltVel = 0;
             player.tilt = 0;
-            player.squashScale = 1;
-            player.stretchScale = 1;
+
+            const estimatedAirTimeSec = (Math.abs(player.vy) * 2) / GRAVITY;
+            const estimatedJumpDistance = player.vx * estimatedAirTimeSec;
+            const estimatedAirTimeMs = estimatedAirTimeSec * 1000;
+            player.flipActive = estimatedJumpDistance >= LONG_JUMP_FLIP_DISTANCE;
+            player.flipAngle = 0;
+            player.jumpStartTime = now;
+            player.jumpDuration = Math.max(280, estimatedAirTimeMs);
+            player.flipStart = now + player.jumpDuration * FLIP_START_PORTION;
+            player.flipDuration = Math.max(260, player.jumpDuration * FLIP_DURATION_PORTION);
+            player.flipDirection = player.vx >= 0 ? 1 : -1;
+            player.jumpDistance = estimatedJumpDistance;
+            player.launchPower = chargePower;
+            player.lastAirWake = now;
+
+            player.squashScale = 0.84;
+            player.stretchScale = 0.78;
+            player.floatOffset = 0;
+
+            const currBlock = blocks[currentBlockIdx] || blocks[0];
+            if (currBlock) spawnTakeoffParticles(player.x, currBlock.y, currBlock.color, chargePower);
+            triggerHaptic(8 + Math.round(chargePower * 12));
 
             state = 'jumping';
             hint.style.opacity = '0';
@@ -335,7 +420,7 @@
                 const p = particles[i];
                 p.x += p.vx * dtSec;
                 p.y += p.vy * dtSec;
-                p.vy += GRAVITY * 0.45 * dtSec;
+                p.vy += GRAVITY * (p.type === 'wake' ? 0.08 : 0.45) * dtSec;
                 p.life -= dtSec;
                 if (p.life <= 0) particles.splice(i, 1);
             }
@@ -380,16 +465,47 @@
             }
 
             if (state === 'jumping') {
+                const airT = clamp01((timeMs - player.jumpStartTime) / player.jumpDuration);
                 player.vy += GRAVITY * dtSec;
                 player.x += player.vx * dtSec;
                 player.y += player.vy * dtSec;
-                player.tilt += player.tiltVel * dtSec;
+
+                if (player.flipActive) {
+                    const flipT = clamp01((timeMs - player.flipStart) / player.flipDuration);
+                    player.flipAngle = easeInOutQuad(flipT) * Math.PI * 2 * player.flipDirection;
+
+                    const prepDuration = Math.max(1, player.flipStart - player.jumpStartTime);
+                    const prepT = clamp01((timeMs - player.jumpStartTime) / prepDuration);
+                    const settleStart = player.flipStart + player.flipDuration;
+                    const settleT = clamp01((timeMs - settleStart) / Math.max(1, player.jumpDuration * 0.22));
+                    let targetTilt = -0.28 * easeOutQuad(prepT);
+                    if (flipT > 0) targetTilt = 0.04 * Math.sin(flipT * Math.PI * 2);
+                    if (flipT >= 1) targetTilt = 0.16 * (1 - easeOutQuad(settleT));
+                    player.tilt += (targetTilt - player.tilt) * Math.min(1, dtSec * 14);
+                } else {
+                    player.flipAngle = 0;
+                    const ascent = clamp01(-player.vy / POWER_MAX_VY);
+                    const descent = clamp01(player.vy / POWER_MAX_VY);
+                    const targetTilt = (-0.22 * ascent + 0.28 * descent) * (0.55 + player.launchPower * 0.65);
+                    player.tilt += (targetTilt - player.tilt) * Math.min(1, dtSec * 9);
+                }
+
                 player.squashScale += (1 - player.squashScale) * Math.min(1, dtSec * 10);
                 player.stretchScale += (1 - player.stretchScale) * Math.min(1, dtSec * 10);
 
-                if (player.vy < -80) {
-                    player.stretchScale = Math.min(1.25, 1 + Math.abs(player.vy) / 2000);
-                    player.squashScale = Math.max(0.78, 1 - Math.abs(player.vy) / 3500);
+                const airSpeed = clamp01((Math.abs(player.vy) - 70 * WORLD_SCALE) / POWER_MAX_VY);
+                if (airSpeed > 0) {
+                    const stretchAmount = player.vy < 0 ? 0.24 : 0.12;
+                    const squashAmount = player.vy < 0 ? 0.13 : 0.07;
+                    const targetStretch = 1 - airSpeed * stretchAmount;
+                    const targetSquash = 1 - airSpeed * squashAmount;
+                    player.stretchScale += (targetStretch - player.stretchScale) * Math.min(1, dtSec * 16);
+                    player.squashScale += (targetSquash - player.squashScale) * Math.min(1, dtSec * 16);
+                }
+
+                if ((player.flipActive || player.launchPower > 0.55) && timeMs - player.lastAirWake > AIR_WAKE_INTERVAL_MS) {
+                    spawnAirWake(player.x, player.y + PLAYER_H * 0.55, player.launchPower * (0.35 + Math.sin(airT * Math.PI) * 0.65));
+                    player.lastAirWake = timeMs;
                 }
 
                 if (player.y + PLAYER_H > H + 400) gameOver();
@@ -433,13 +549,21 @@
         }
 
         function landOnBlock(idx, block) {
+            const landingImpact = clamp01((player.vy - 170 * WORLD_SCALE) / (POWER_MAX_VY * 0.9));
             player.y = block.y - PLAYER_H;
             player.x = Math.max(block.x - PLAYER_W * 0.35, Math.min(player.x, block.x + BLOCK_W + PLAYER_W * 0.35));
             player.vx = 0;
             player.vy = 0;
-            player.squashScale = 1.22;
-            player.stretchScale = 0.72;
+            player.squashScale = 1.16 + landingImpact * 0.2;
+            player.stretchScale = 0.8 - landingImpact * 0.1;
             player.tiltVel = 0;
+            player.flipActive = false;
+            player.flipAngle = 0;
+            player.jumpStartTime = 0;
+            player.jumpDuration = 0;
+            player.jumpDistance = 0;
+            player.launchPower = 0;
+            player.lastAirWake = 0;
 
             if (idx > currentBlockIdx) {
                 const centerX = block.x + BLOCK_W / 2;
@@ -463,16 +587,18 @@
 
                 spawnLandingParticles(player.x, block.y, block.color);
                 spawnScorePopup(player.x, block.y - 22, bonusText);
-                shakeAmount = distFromCenter < 0.25 ? 5.5 : 3.2;
+                shakeAmount = (distFromCenter < 0.25 ? 5.5 : 3.2) + landingImpact * 2.2;
                 blockBounces.push({ idx, elapsed: 0, duration: 0.4 });
                 currentBlockIdx = idx;
                 cameraSettleTimer = 0.28;
                 ensureBlocksAhead();
+                triggerHaptic(distFromCenter < 0.25 ? [8, 32, 10] : 12 + Math.round(landingImpact * 10));
             } else {
-                shakeAmount = 1.0;
+                shakeAmount = 1.0 + landingImpact * 1.8;
                 blockBounces.push({ idx, elapsed: 0, duration: 0.18 });
                 comboCount = 0;
                 addShadowTrail(player.x, block.y);
+                triggerHaptic(8);
             }
 
             state = 'ready';
@@ -484,6 +610,13 @@
             state = 'gameover';
             player.tilt = 0;
             player.tiltVel = 0;
+            player.flipActive = false;
+            player.flipAngle = 0;
+            player.jumpStartTime = 0;
+            player.jumpDuration = 0;
+            player.jumpDistance = 0;
+            player.launchPower = 0;
+            player.lastAirWake = 0;
             player.squashScale = 1;
             player.stretchScale = 1;
             if (score > highScore) {
@@ -555,6 +688,22 @@
 
         function uiPx(px) {
             return Math.round(px * dpr);
+        }
+
+        function clamp01(value) {
+            return Math.max(0, Math.min(1, value));
+        }
+
+        function easeInOutQuad(t) {
+            return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        }
+
+        function easeOutQuad(t) {
+            return 1 - (1 - t) * (1 - t);
+        }
+
+        function triggerHaptic(duration) {
+            if (navigator.vibrate) navigator.vibrate(duration);
         }
 
         function hash01(seed) {
@@ -738,6 +887,97 @@
             }
         }
 
+        function drawMaterialTopDetails(g, block, idx, timestamp) {
+            const palette = block.palette || {};
+            const kind = palette.kind;
+            const seed = block.detailSeed || idx * 71.3;
+
+            ctx.save();
+            clipPolygon([g.R, g.F, g.L, g.B]);
+
+            if (kind === 'wood') {
+                ctx.strokeStyle = 'rgba(81,51,31,0.28)';
+                ctx.lineWidth = 1.2;
+                for (let i = 0; i < 6; i++) {
+                    const t = -0.72 + i * 0.28 + hash01(seed + i * 8.1) * 0.04;
+                    ctx.beginPath();
+                    ctx.moveTo(g.center.sx + g.zAxis.x * t - g.xAxis.x * 0.86, g.center.sy + g.zAxis.y * t - g.xAxis.y * 0.86);
+                    ctx.quadraticCurveTo(
+                        g.center.sx + g.zAxis.x * (t + 0.05),
+                        g.center.sy + g.zAxis.y * (t + 0.05) + Math.sin(i) * 2,
+                        g.center.sx + g.zAxis.x * t + g.xAxis.x * 0.86,
+                        g.center.sy + g.zAxis.y * t + g.xAxis.y * 0.86
+                    );
+                    ctx.stroke();
+                }
+
+                ctx.strokeStyle = 'rgba(255,235,194,0.2)';
+                ctx.lineWidth = 0.8;
+                ctx.beginPath();
+                ctx.ellipse(g.center.sx - g.xAxis.x * 0.22, g.center.sy - g.xAxis.y * 0.22, BLOCK_W * 0.12, BLOCK_W * 0.035, ISO_ANGLE, 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (kind === 'ice') {
+                const shimmer = 0.22 + Math.sin(timestamp * 0.003 + seed) * 0.06;
+                ctx.strokeStyle = `rgba(255,255,255,${shimmer})`;
+                ctx.lineWidth = 1.1;
+                for (let i = 0; i < 4; i++) {
+                    const u = -0.5 + i * 0.34;
+                    ctx.beginPath();
+                    ctx.moveTo(g.center.sx + g.xAxis.x * u - g.zAxis.x * 0.48, g.center.sy + g.xAxis.y * u - g.zAxis.y * 0.48);
+                    ctx.lineTo(g.center.sx + g.xAxis.x * (u + 0.2) + g.zAxis.x * 0.52, g.center.sy + g.xAxis.y * (u + 0.2) + g.zAxis.y * 0.52);
+                    ctx.stroke();
+                }
+            } else if (kind === 'target') {
+                for (let i = 0; i < 3; i++) {
+                    const r = BLOCK_W * (0.24 - i * 0.065);
+                    ctx.strokeStyle = i % 2 === 0 ? 'rgba(210,90,88,0.72)' : 'rgba(95,143,105,0.65)';
+                    ctx.lineWidth = 3.2 - i * 0.45;
+                    ctx.beginPath();
+                    ctx.ellipse(g.center.sx, g.center.sy, r, r * 0.44, ISO_ANGLE, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            } else if (kind === 'metal') {
+                const gloss = ctx.createLinearGradient(g.L.x, g.L.y, g.R.x, g.R.y);
+                gloss.addColorStop(0, 'rgba(255,255,255,0)');
+                gloss.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+                gloss.addColorStop(0.62, 'rgba(255,255,255,0.03)');
+                gloss.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = gloss;
+                ctx.fillRect(g.L.x - BLOCK_W, g.B.y - BLOCK_W, BLOCK_W * 2.2, BLOCK_W * 1.4);
+
+                ctx.fillStyle = 'rgba(72,70,61,0.22)';
+                for (let i = 0; i < 4; i++) {
+                    const u = i % 2 === 0 ? -0.56 : 0.56;
+                    const v = i < 2 ? -0.42 : 0.42;
+                    ctx.beginPath();
+                    ctx.arc(g.center.sx + g.xAxis.x * u + g.zAxis.x * v, g.center.sy + g.xAxis.y * u + g.zAxis.y * v, 2.4 * WORLD_SCALE, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (kind === 'clay') {
+                ctx.strokeStyle = 'rgba(117,63,48,0.16)';
+                ctx.lineWidth = 1.4;
+                for (let i = 0; i < 5; i++) {
+                    const t = -0.6 + i * 0.3;
+                    ctx.beginPath();
+                    ctx.moveTo(g.center.sx - g.xAxis.x * 0.8 + g.zAxis.x * t, g.center.sy - g.xAxis.y * 0.8 + g.zAxis.y * t);
+                    ctx.lineTo(g.center.sx + g.xAxis.x * 0.8 + g.zAxis.x * (t + 0.04), g.center.sy + g.xAxis.y * 0.8 + g.zAxis.y * (t + 0.04));
+                    ctx.stroke();
+                }
+            } else if (kind === 'granite') {
+                for (let i = 0; i < 20; i++) {
+                    const u = (hash01(seed + i * 19.5) - 0.5) * 1.35;
+                    const v = (hash01(seed + i * 23.7) - 0.5) * 1.35;
+                    if (Math.abs(u) + Math.abs(v) > 0.96) continue;
+                    ctx.fillStyle = i % 3 === 0 ? 'rgba(245,245,238,0.3)' : 'rgba(36,38,42,0.18)';
+                    ctx.beginPath();
+                    ctx.arc(g.center.sx + g.xAxis.x * u + g.zAxis.x * v, g.center.sy + g.xAxis.y * u + g.zAxis.y * v, 1.2 + hash01(seed + i * 3.9) * 1.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            ctx.restore();
+        }
+
         function drawBlock(block, idx, timestamp) {
             const timeMs = timestamp || performance.now();
             const g = getBlockGeometry(block, idx, timeMs);
@@ -764,6 +1004,9 @@
             }
 
             drawPolygon([g.R, g.F, g.L, g.B], topC);
+            drawBlockTopTexture(g, block, idx);
+            drawMaterialTopDetails(g, block, idx, timeMs);
+            if (palette.kind === 'grass') drawGrassRim(g, block);
 
             ctx.strokeStyle = palette.kind === 'grass' ? 'rgba(69,118,70,0.36)' : 'rgba(32,34,38,0.34)';
             ctx.lineWidth = 1.15;
@@ -829,21 +1072,50 @@
             }
         }
 
-        function drawPlayerShadow() {
-            const feetY = player.y + PLAYER_H + player.floatOffset;
-            const base = isoProject(player.x, feetY);
-            base.sy -= BLOCK_D * 0.13;
-            let heightFactor = 1;
-
-            if (state === 'jumping') {
-                const currentBlock = blocks[currentBlockIdx] || blocks[0];
-                const heightAboveBlock = Math.max(0, currentBlock.y - (player.y + PLAYER_H));
-                heightFactor = Math.max(0.2, 1 - heightAboveBlock / 250);
+        function getPlayerShadowSurface() {
+            if (state !== 'jumping') {
+                const block = blocks[currentBlockIdx] || blocks[0];
+                return {
+                    y: player.y + PLAYER_H + player.floatOffset,
+                    idx: currentBlockIdx,
+                    block,
+                };
             }
 
-            const rx = PLAYER_W * 0.5 * heightFactor;
+            let shadowIdx = currentBlockIdx;
+            const margin = BLOCK_W * 0.38;
+            for (let i = currentBlockIdx; i < blocks.length; i++) {
+                const b = blocks[i];
+                if (player.x >= b.x - margin && player.x <= b.x + BLOCK_W + margin) {
+                    shadowIdx = i;
+                    break;
+                }
+            }
+
+            const block = blocks[shadowIdx] || blocks[currentBlockIdx] || blocks[0];
+            return {
+                y: block ? block.y + getBlockFloat(shadowIdx, performance.now()) : player.y + PLAYER_H,
+                idx: shadowIdx,
+                block,
+            };
+        }
+
+        function drawPlayerShadow() {
+            const surface = getPlayerShadowSurface();
+            const base = isoProject(player.x, surface.y);
+            base.sy -= BLOCK_D * 0.13;
+            let heightFactor = 1;
+            let speedStretch = 0;
+
+            if (state === 'jumping') {
+                const heightAboveSurface = Math.max(0, surface.y - (player.y + PLAYER_H));
+                heightFactor = Math.max(0.18, 1 - heightAboveSurface / (285 * WORLD_SCALE));
+                speedStretch = clamp01(Math.abs(player.vx) / POWER_MAX_VX) * 0.5;
+            }
+
+            const rx = PLAYER_W * (0.55 + speedStretch) * heightFactor;
             const ry = PLAYER_W * 0.28 * heightFactor;
-            const alpha = 0.2 * heightFactor;
+            const alpha = 0.22 * heightFactor;
 
             ctx.fillStyle = `rgba(0,0,0,${alpha * 0.25})`;
             ctx.beginPath();
@@ -885,7 +1157,8 @@
 
             ctx.save();
             ctx.translate(sx, bodyCenterY);
-            if (Math.abs(player.tilt) > 0.0008) ctx.rotate(player.tilt);
+            const visualRotation = player.tilt + player.flipAngle;
+            if (Math.abs(visualRotation) > 0.0008) ctx.rotate(visualRotation);
 
             if (state === 'charging' && chargePower > 0.05) {
                 const glowAlpha = chargePower * 0.12;
@@ -1003,6 +1276,10 @@
                     ctx.fillStyle = `rgba(255,254,248,${alpha})`;
                     ctx.shadowColor = `rgba(255,255,240,${alpha * 0.5})`;
                     ctx.shadowBlur = r * 1.8;
+                } else if (p.type === 'wake') {
+                    ctx.fillStyle = `rgba(255,255,255,${alpha * 0.28})`;
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur = 0;
                 } else {
                     ctx.fillStyle = hexToRgba(p.color, alpha * 0.8);
                     ctx.shadowColor = 'transparent';
@@ -1010,7 +1287,11 @@
                 }
 
                 ctx.beginPath();
-                ctx.arc(sp.sx, sp.sy, r, 0, Math.PI * 2);
+                if (p.type === 'wake') {
+                    ctx.ellipse(sp.sx, sp.sy, r * 1.9, r * 0.55, -0.28, 0, Math.PI * 2);
+                } else {
+                    ctx.arc(sp.sx, sp.sy, r, 0, Math.PI * 2);
+                }
                 ctx.fill();
                 ctx.shadowColor = 'transparent';
                 ctx.shadowBlur = 0;

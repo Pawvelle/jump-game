@@ -1143,44 +1143,53 @@
             ctx.fillStyle = 'rgba(38,52,42,0.32)';
             ctx.fillRect(0, 0, W, H);
 
-            const cardW = Math.min(280, W * 0.72);
-            const cardH = 175;
+            const cardW = Math.min(uiPx(340), W * 0.78);
+            const cardH = uiPx(236);
             const cardX = W / 2 - cardW / 2;
-            const cardY = H / 2 - cardH / 2 - 22;
+            const cardY = H / 2 - cardH / 2 - uiPx(12);
+            const radius = uiPx(18);
 
             ctx.fillStyle = 'rgba(0,0,0,0.06)';
-            roundRect(cardX + 2, cardY + 5, cardW, cardH, 18);
+            roundRect(cardX + uiPx(2), cardY + uiPx(6), cardW, cardH, radius);
             ctx.fill();
 
             const cardGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
             cardGrad.addColorStop(0, 'rgba(250,252,245,0.97)');
             cardGrad.addColorStop(1, 'rgba(239,244,230,0.97)');
             ctx.fillStyle = cardGrad;
-            roundRect(cardX, cardY, cardW, cardH, 18);
+            roundRect(cardX, cardY, cardW, cardH, radius);
             ctx.fill();
 
             ctx.strokeStyle = 'rgba(119,139,111,0.28)';
-            ctx.lineWidth = 0.7;
-            roundRect(cardX, cardY, cardW, cardH, 18);
+            ctx.lineWidth = uiPx(0.7);
+            roundRect(cardX, cardY, cardW, cardH, radius);
             ctx.stroke();
 
             ctx.fillStyle = '#64735f';
-            ctx.font = `600 ${uiPx(22)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
+            ctx.font = `600 ${uiPx(24)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('游戏结束', W / 2, cardY + 36);
+            ctx.fillText('游戏结束', W / 2, cardY + uiPx(38));
 
             ctx.fillStyle = '#394e45';
-            ctx.font = `600 ${uiPx(56)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
-            ctx.fillText(score, W / 2, cardY + 82);
+            ctx.font = `700 ${uiPx(64)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
+            ctx.fillText(score, W / 2, cardY + uiPx(96));
 
             ctx.fillStyle = '#64735f';
-            ctx.font = `500 ${uiPx(17)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
-            ctx.fillText(`最高分 ${highScore}`, W / 2, cardY + 118);
+            ctx.font = `500 ${uiPx(18)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
+            ctx.fillText(`最高分 ${highScore}`, W / 2, cardY + uiPx(146));
+
+            const buttonW = Math.min(uiPx(236), cardW - uiPx(48));
+            const buttonH = uiPx(44);
+            const buttonX = W / 2 - buttonW / 2;
+            const buttonY = cardY + cardH - uiPx(62);
+            ctx.fillStyle = 'rgba(100,115,95,0.1)';
+            roundRect(buttonX, buttonY, buttonW, buttonH, uiPx(12));
+            ctx.fill();
 
             ctx.fillStyle = '#87927f';
             ctx.font = `500 ${uiPx(17)}px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif`;
-            ctx.fillText('点击画面重新开始', W / 2, cardY + 150);
+            ctx.fillText('点击画面重新开始', W / 2, buttonY + buttonH / 2);
         }
 
         let lastTime = performance.now();

@@ -93,6 +93,7 @@
         const BLOCK_MIN_GAP = 220 * WORLD_SCALE;
         const BLOCK_MAX_GAP = 330 * WORLD_SCALE;
         const BLOCK_Y_VARY = 10 * WORLD_SCALE;
+        const DIRECTION_SWITCH_JUMPS = 4;
 
         const VIEW_X_SCALE = 0.66;
         const VIEW_Y_SKEW = -0.42;
@@ -129,8 +130,10 @@
 
         let player = {
             x: 0,
+            side: 0,
             y: 0,
             vx: 0,
+            vSide: 0,
             vy: 0,
             floatOffset: 0,
             tilt: 0,
@@ -151,6 +154,7 @@
 
         let currentBlockIdx = 0;
         let cameraX = 0;
+        let cameraSide = 0;
         let cameraSettleTimer = 0;
         let chargeStart = 0;
         let chargePower = 0;
@@ -164,19 +168,32 @@
         let blocks = [];
         let blockSerial = 0;
 
+        function getBlockAxis(serial) {
+            if (serial === 0) return 'x';
+            return Math.floor((serial - 1) / DIRECTION_SWITCH_JUMPS) % 2 === 0 ? 'x' : 'side';
+        }
+
         function createBlock(prevBlock, forceGap) {
             const gap = forceGap ?? (BLOCK_MIN_GAP + Math.random() * (BLOCK_MAX_GAP - BLOCK_MIN_GAP));
-            const x = prevBlock ? prevBlock.x + BLOCK_W + gap : W * 0.18;
+            const serial = blockSerial++;
+            const nextAxis = getBlockAxis(serial);
+            const x = prevBlock
+                ? prevBlock.x + (nextAxis === 'x' ? BLOCK_W + gap : 0)
+                : W * 0.18;
+            const side = prevBlock
+                ? prevBlock.side + (nextAxis === 'side' ? BLOCK_W + gap : 0)
+                : 0;
             const baseY = prevBlock ? prevBlock.y : 0;
             const y = baseY + (Math.random() - 0.5) * BLOCK_Y_VARY * 0.55;
-            const serial = blockSerial++;
             const palette = serial === 0
                 ? BLOCK_PALETTES[0]
                 : BLOCK_PALETTES[1 + Math.floor(Math.random() * (BLOCK_PALETTES.length - 1))];
             floatPhases.push(Math.random() * Math.PI * 2);
             return {
                 x,
+                side,
                 y,
+                axis: nextAxis,
                 serial,
                 color: palette.top,
                 palette,
@@ -191,7 +208,7 @@
                 const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
                 blocks.push(createBlock(prev));
             }
-            while (blocks.length > 3 && blocks[0].x + BLOCK_W < cameraX - W * 0.55) {
+            while (blocks.length > 3 && currentBlockIdx > 1) {
                 blocks.shift();
                 floatPhases.shift();
                 currentBlockIdx = Math.max(0, currentBlockIdx - 1);
@@ -199,14 +216,16 @@
             }
         }
 
-        function spawnLandingParticles(x, y, color) {
+        function spawnLandingParticles(x, side, y, color) {
             for (let i = 0; i < 18; i++) {
                 const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.85;
                 const speed = 60 + Math.random() * 200;
                 particles.push({
                     x,
+                    side,
                     y,
                     vx: Math.cos(angle) * speed,
+                    vSide: (Math.random() - 0.5) * speed * 0.32,
                     vy: Math.sin(angle) * speed,
                     life: 0.3 + Math.random() * 0.55,
                     maxLife: 0.3 + Math.random() * 0.55,
@@ -221,8 +240,10 @@
                 const speed = 90 + Math.random() * 240;
                 particles.push({
                     x,
+                    side,
                     y,
                     vx: Math.cos(angle) * speed,
+                    vSide: (Math.random() - 0.5) * speed * 0.26,
                     vy: Math.sin(angle) * speed - 50,
                     life: 0.18 + Math.random() * 0.32,
                     maxLife: 0.18 + Math.random() * 0.32,
@@ -233,15 +254,17 @@
             }
         }
 
-        function spawnTakeoffParticles(x, y, color, power) {
+        function spawnTakeoffParticles(x, side, y, color, power) {
             const count = 8 + Math.round(power * 12);
             for (let i = 0; i < count; i++) {
                 const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.25;
                 const speed = 45 + Math.random() * (105 + power * 95);
                 particles.push({
                     x: x + (Math.random() - 0.5) * PLAYER_W * 1.4,
+                    side: side + (Math.random() - 0.5) * PLAYER_W * 1.4,
                     y,
                     vx: Math.cos(angle) * speed - power * 35,
+                    vSide: (Math.random() - 0.5) * speed * 0.45,
                     vy: Math.sin(angle) * speed - power * 45,
                     life: 0.18 + Math.random() * 0.28,
                     maxLife: 0.18 + Math.random() * 0.28,
@@ -252,11 +275,16 @@
             }
         }
 
-        function spawnAirWake(x, y, power) {
+        function spawnAirWake(x, side, y, power, vx, vSide) {
+            const speed = Math.max(1, Math.hypot(vx, vSide));
+            const dirX = vx / speed;
+            const dirSide = vSide / speed;
             particles.push({
-                x: x - PLAYER_W * (0.35 + Math.random() * 0.6),
+                x: x - dirX * PLAYER_W * (0.35 + Math.random() * 0.6),
+                side: side - dirSide * PLAYER_W * (0.35 + Math.random() * 0.6),
                 y: y + (Math.random() - 0.5) * PLAYER_H * 0.34,
-                vx: -70 * WORLD_SCALE - power * 80 * WORLD_SCALE,
+                vx: -dirX * (70 * WORLD_SCALE + power * 80 * WORLD_SCALE),
+                vSide: -dirSide * (70 * WORLD_SCALE + power * 80 * WORLD_SCALE),
                 vy: (Math.random() - 0.5) * 30 * WORLD_SCALE,
                 life: 0.18 + power * 0.12,
                 maxLife: 0.18 + power * 0.12,
@@ -266,12 +294,12 @@
             });
         }
 
-        function spawnScorePopup(x, y, text) {
-            scorePopups.push({ x, y, life: 0.85, maxLife: 0.85, text: text || '+1' });
+        function spawnScorePopup(x, side, y, text) {
+            scorePopups.push({ x, side, y, life: 0.85, maxLife: 0.85, text: text || '+1' });
         }
 
-        function addShadowTrail(x, y) {
-            shadowTrails.push({ x, y, life: 0.25, maxLife: 0.25, alpha: 0.35 });
+        function addShadowTrail(x, side, y) {
+            shadowTrails.push({ x, side, y, life: 0.25, maxLife: 0.25, alpha: 0.35 });
         }
 
         function initGame() {
@@ -292,8 +320,10 @@
             blocks.push(b1);
 
             player.x = b1.x + BLOCK_W / 2;
+            player.side = b1.side + BLOCK_W / 2;
             player.y = b1.y - PLAYER_H;
             player.vx = 0;
+            player.vSide = 0;
             player.vy = 0;
             player.floatOffset = 0;
             player.tilt = 0;
@@ -313,6 +343,7 @@
 
             blocks.push(createBlock(b1));
             cameraX = b1.x + BLOCK_W / 2 - W * 0.04;
+            cameraSide = b1.side + BLOCK_W / 2;
             state = 'ready';
             chargePower = 0;
             ensureBlocksAhead();
@@ -341,13 +372,21 @@
             chargePower = clamped / CHARGE_MAX_MS;
 
             const now = performance.now();
-            player.vx = POWER_MIN_VX + chargePower * (POWER_MAX_VX - POWER_MIN_VX);
+            const jumpSpeed = POWER_MIN_VX + chargePower * (POWER_MAX_VX - POWER_MIN_VX);
+            const targetBlock = blocks[currentBlockIdx + 1] || blocks[currentBlockIdx];
+            const targetX = targetBlock ? targetBlock.x + BLOCK_W / 2 : player.x + 1;
+            const targetSide = targetBlock ? targetBlock.side + BLOCK_W / 2 : player.side;
+            const dirX = targetX - player.x;
+            const dirSide = targetSide - player.side;
+            const dirLen = Math.max(1, Math.hypot(dirX, dirSide));
+            player.vx = jumpSpeed * dirX / dirLen;
+            player.vSide = jumpSpeed * dirSide / dirLen;
             player.vy = -(POWER_MIN_VY + chargePower * (POWER_MAX_VY - POWER_MIN_VY));
             player.tiltVel = 0;
             player.tilt = 0;
 
             const estimatedAirTimeSec = (Math.abs(player.vy) * 2) / GRAVITY;
-            const estimatedJumpDistance = player.vx * estimatedAirTimeSec;
+            const estimatedJumpDistance = jumpSpeed * estimatedAirTimeSec;
             const estimatedAirTimeMs = estimatedAirTimeSec * 1000;
             player.flipActive = estimatedJumpDistance >= LONG_JUMP_FLIP_DISTANCE;
             player.flipAngle = 0;
@@ -355,7 +394,7 @@
             player.jumpDuration = Math.max(280, estimatedAirTimeMs);
             player.flipStart = now + player.jumpDuration * FLIP_START_PORTION;
             player.flipDuration = Math.max(260, player.jumpDuration * FLIP_DURATION_PORTION);
-            player.flipDirection = player.vx >= 0 ? 1 : -1;
+            player.flipDirection = player.vx >= player.vSide ? 1 : -1;
             player.jumpDistance = estimatedJumpDistance;
             player.launchPower = chargePower;
             player.lastAirWake = now;
@@ -365,7 +404,7 @@
             player.floatOffset = 0;
 
             const currBlock = blocks[currentBlockIdx] || blocks[0];
-            if (currBlock) spawnTakeoffParticles(player.x, currBlock.y, currBlock.color, chargePower);
+            if (currBlock) spawnTakeoffParticles(player.x, player.side, currBlock.y, currBlock.color, chargePower);
             triggerHaptic(8 + Math.round(chargePower * 12));
 
             state = 'jumping';
@@ -419,6 +458,7 @@
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.x += p.vx * dtSec;
+                p.side = (p.side || 0) + (p.vSide || 0) * dtSec;
                 p.y += p.vy * dtSec;
                 p.vy += GRAVITY * (p.type === 'wake' ? 0.08 : 0.45) * dtSec;
                 p.life -= dtSec;
@@ -468,6 +508,7 @@
                 const airT = clamp01((timeMs - player.jumpStartTime) / player.jumpDuration);
                 player.vy += GRAVITY * dtSec;
                 player.x += player.vx * dtSec;
+                player.side += player.vSide * dtSec;
                 player.y += player.vy * dtSec;
 
                 if (player.flipActive) {
@@ -504,7 +545,14 @@
                 }
 
                 if ((player.flipActive || player.launchPower > 0.55) && timeMs - player.lastAirWake > AIR_WAKE_INTERVAL_MS) {
-                    spawnAirWake(player.x, player.y + PLAYER_H * 0.55, player.launchPower * (0.35 + Math.sin(airT * Math.PI) * 0.65));
+                    spawnAirWake(
+                        player.x,
+                        player.side,
+                        player.y + PLAYER_H * 0.55,
+                        player.launchPower * (0.35 + Math.sin(airT * Math.PI) * 0.65),
+                        player.vx,
+                        player.vSide
+                    );
                     player.lastAirWake = timeMs;
                 }
 
@@ -533,6 +581,7 @@
         function checkLanding(dtSec) {
             const pBottom = player.y + PLAYER_H;
             const pCenterX = player.x;
+            const pCenterSide = player.side;
 
             for (let i = currentBlockIdx; i < blocks.length; i++) {
                 const b = blocks[i];
@@ -540,7 +589,12 @@
 
                 if (player.vy > 0 && pBottom >= bTop && pBottom - player.vy * dtSec <= bTop + 20) {
                     const margin = PLAYER_W * 0.4;
-                    if (pCenterX > b.x - margin && pCenterX < b.x + BLOCK_W + margin) {
+                    if (
+                        pCenterX > b.x - margin &&
+                        pCenterX < b.x + BLOCK_W + margin &&
+                        pCenterSide > b.side - margin &&
+                        pCenterSide < b.side + BLOCK_W + margin
+                    ) {
                         landOnBlock(i, b);
                         return;
                     }
@@ -552,7 +606,9 @@
             const landingImpact = clamp01((player.vy - 170 * WORLD_SCALE) / (POWER_MAX_VY * 0.9));
             player.y = block.y - PLAYER_H;
             player.x = Math.max(block.x - PLAYER_W * 0.35, Math.min(player.x, block.x + BLOCK_W + PLAYER_W * 0.35));
+            player.side = Math.max(block.side - PLAYER_W * 0.35, Math.min(player.side, block.side + BLOCK_W + PLAYER_W * 0.35));
             player.vx = 0;
+            player.vSide = 0;
             player.vy = 0;
             player.squashScale = 1.16 + landingImpact * 0.2;
             player.stretchScale = 0.8 - landingImpact * 0.1;
@@ -567,7 +623,8 @@
 
             if (idx > currentBlockIdx) {
                 const centerX = block.x + BLOCK_W / 2;
-                const distFromCenter = Math.abs(player.x - centerX) / (BLOCK_W / 2);
+                const centerSide = block.side + BLOCK_W / 2;
+                const distFromCenter = Math.hypot(player.x - centerX, player.side - centerSide) / (BLOCK_W / 2);
                 let bonusText = '+1';
 
                 if (distFromCenter < 0.25) {
@@ -585,8 +642,8 @@
                     localStorage.setItem('jjHighScore_v2', highScore);
                 }
 
-                spawnLandingParticles(player.x, block.y, block.color);
-                spawnScorePopup(player.x, block.y - 22, bonusText);
+                spawnLandingParticles(player.x, player.side, block.y, block.color);
+                spawnScorePopup(player.x, player.side, block.y - 22, bonusText);
                 shakeAmount = (distFromCenter < 0.25 ? 5.5 : 3.2) + landingImpact * 2.2;
                 blockBounces.push({ idx, elapsed: 0, duration: 0.4 });
                 currentBlockIdx = idx;
@@ -597,7 +654,7 @@
                 shakeAmount = 1.0 + landingImpact * 1.8;
                 blockBounces.push({ idx, elapsed: 0, duration: 0.18 });
                 comboCount = 0;
-                addShadowTrail(player.x, block.y);
+                addShadowTrail(player.x, player.side, block.y);
                 triggerHaptic(8);
             }
 
@@ -610,6 +667,7 @@
             state = 'gameover';
             player.tilt = 0;
             player.tiltVel = 0;
+            player.vSide = 0;
             player.flipActive = false;
             player.flipAngle = 0;
             player.jumpStartTime = 0;
@@ -630,33 +688,35 @@
             if (state === 'gameover') return;
 
             let targetX;
+            let targetSide;
 
             if (state === 'jumping') {
                 targetX = player.x + player.vx * 0.22;
+                targetSide = player.side + player.vSide * 0.22;
             } else {
                 const curr = blocks[currentBlockIdx];
                 const next = blocks[currentBlockIdx + 1];
                 if (next) {
                     targetX = (curr.x + BLOCK_W / 2 + next.x + BLOCK_W / 2) / 2;
+                    targetSide = (curr.side + BLOCK_W / 2 + next.side + BLOCK_W / 2) / 2;
                 } else {
                     targetX = curr.x + BLOCK_W / 2;
+                    targetSide = curr.side + BLOCK_W / 2;
                 }
             }
 
             const lerpFactor = cameraSettleTimer > 0 ? 0.00006 : 0.00025;
             const lerp = 1 - Math.pow(lerpFactor, dtSec);
             cameraX += (targetX - cameraX) * lerp;
-
-            if (blocks.length > 0) {
-                cameraX = Math.max(cameraX, blocks[0].x - W * 0.12);
-            }
+            cameraSide += (targetSide - cameraSide) * lerp;
         }
 
-        function isoProject(x, y) {
+        function isoProject(x, y, side = 0) {
             const relX = x - cameraX;
+            const relSide = side - cameraSide;
             return {
-                sx: W / 2 + relX * VIEW_X_SCALE,
-                sy: groundY + relX * VIEW_Y_SKEW + y
+                sx: W / 2 + relX * VIEW_X_SCALE - relSide * VIEW_X_SCALE,
+                sy: groundY + relX * VIEW_Y_SKEW + relSide * VIEW_Y_SKEW + y
             };
         }
 
@@ -757,7 +817,7 @@
                 }
             }
 
-            const projectedCenter = isoProject(block.x + BLOCK_W / 2, block.y + floatY + bounceDY);
+            const projectedCenter = isoProject(block.x + BLOCK_W / 2, block.y + floatY + bounceDY, block.side + BLOCK_W / 2);
             const h = BLOCK_THICK * (1 - bounceSquish);
             const depthX = BLOCK_D * DEPTH_X_SCALE;
             const depthY = BLOCK_D * DEPTH_Y_SCALE;
@@ -1077,6 +1137,7 @@
                 const block = blocks[currentBlockIdx] || blocks[0];
                 return {
                     y: player.y + PLAYER_H + player.floatOffset,
+                    side: player.side,
                     idx: currentBlockIdx,
                     block,
                 };
@@ -1086,7 +1147,12 @@
             const margin = BLOCK_W * 0.38;
             for (let i = currentBlockIdx; i < blocks.length; i++) {
                 const b = blocks[i];
-                if (player.x >= b.x - margin && player.x <= b.x + BLOCK_W + margin) {
+                if (
+                    player.x >= b.x - margin &&
+                    player.x <= b.x + BLOCK_W + margin &&
+                    player.side >= b.side - margin &&
+                    player.side <= b.side + BLOCK_W + margin
+                ) {
                     shadowIdx = i;
                     break;
                 }
@@ -1095,6 +1161,7 @@
             const block = blocks[shadowIdx] || blocks[currentBlockIdx] || blocks[0];
             return {
                 y: block ? block.y + getBlockFloat(shadowIdx, performance.now()) : player.y + PLAYER_H,
+                side: player.side,
                 idx: shadowIdx,
                 block,
             };
@@ -1102,7 +1169,7 @@
 
         function drawPlayerShadow() {
             const surface = getPlayerShadowSurface();
-            const base = isoProject(player.x, surface.y);
+            const base = isoProject(player.x, surface.y, surface.side);
             base.sy -= BLOCK_D * 0.13;
             let heightFactor = 1;
             let speedStretch = 0;
@@ -1130,7 +1197,7 @@
 
         function drawPlayer() {
             const feetY = player.y + PLAYER_H + player.floatOffset;
-            const base = isoProject(player.x, feetY);
+            const base = isoProject(player.x, feetY, player.side);
             base.sy -= BLOCK_D * 0.13;
             let bodyH = PLAYER_H;
             let bodyW = PLAYER_W;
@@ -1257,7 +1324,7 @@
 
             for (const st of shadowTrails) {
                 const alpha = (st.life / st.maxLife) * st.alpha;
-                const sp = isoProject(st.x, st.y);
+                const sp = isoProject(st.x, st.y, st.side);
                 ctx.fillStyle = `rgba(0,0,0,${alpha})`;
                 ctx.beginPath();
                 ctx.ellipse(sp.sx + 3, sp.sy + 4, PLAYER_W * 0.45, PLAYER_W * 0.25, -0.12, 0, Math.PI * 2);
@@ -1270,7 +1337,7 @@
             for (const p of particles) {
                 const alpha = Math.max(0, p.life / p.maxLife);
                 const r = p.radius * (0.25 + alpha * 0.75);
-                const sp = isoProject(p.x, p.y);
+                const sp = isoProject(p.x, p.y, p.side);
 
                 if (p.type === 'spark') {
                     ctx.fillStyle = `rgba(255,254,248,${alpha})`;
@@ -1299,7 +1366,7 @@
 
             for (const s of scorePopups) {
                 const alpha = s.life / s.maxLife;
-                const sp = isoProject(s.x, s.y);
+                const sp = isoProject(s.x, s.y, s.side);
                 const scale = 1 + (1 - alpha) * 0.3;
                 ctx.save();
                 ctx.translate(sp.sx, sp.sy);
@@ -1335,7 +1402,7 @@
 
         function drawHillLayer(baseY, height, color, parallax, alpha) {
             const period = W * 0.72;
-            const offset = -((cameraX * parallax) % period);
+            const offset = -(((cameraX + cameraSide) * parallax) % period);
 
             ctx.fillStyle = color;
             ctx.globalAlpha = alpha;
